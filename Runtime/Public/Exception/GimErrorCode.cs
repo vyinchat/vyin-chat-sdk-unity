@@ -119,6 +119,8 @@ namespace Gamania.GIMChat
         ErrBotIsInUse = 645009,
         ErrSourceExist = 645010,
         ErrDataSourceInvalid = 645011,
+        Err3rdPartyBotEngineServiceError = 645012,
+        Err3rdPartyBotEngineServiceErrorDuringStream = 645013,
 
         // Push Provider (348xxx)
         ErrInvalidAPNSConfig = 348000,

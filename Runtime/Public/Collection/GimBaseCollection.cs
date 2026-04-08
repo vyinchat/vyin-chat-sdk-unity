@@ -19,13 +19,13 @@ namespace Gamania.GIMChat
         /// Internal event routing hub.
         /// Concrete classes use this to subscribe/unsubscribe channel events.
         /// </summary>
-        protected readonly GimSdkDelegateManager DelegateManager
+        private protected readonly GimSdkDelegateManager DelegateManager
             = GimSdkDelegateManager.Instance;
 
         /// <summary>
         /// Shared in-memory cache for pending and failed messages.
         /// </summary>
-        protected readonly CacheDataSource DataSource
+        private protected readonly CacheDataSource DataSource
             = CacheDataSource.Instance;
     }
 }

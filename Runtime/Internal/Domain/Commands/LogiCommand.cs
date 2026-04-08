@@ -64,6 +64,53 @@ namespace Gamania.GIMChat.Internal.Domain.Commands
         [JsonProperty("unread_count")]
         public UnreadCountModel UnreadCount { get; set; }
 
+        // ── User Profile Fields ──────────────────────────────────────────────────
+
+        /// <summary>
+        /// User ID
+        /// JSON field: "user_id"
+        /// </summary>
+        [JsonProperty("user_id")]
+        public string UserId { get; set; }
+
+        /// <summary>
+        /// User nickname (can be "name" or "nickname" in response)
+        /// JSON field: "nickname" (with alternate "name")
+        /// </summary>
+        [JsonProperty("nickname")]
+        public string Nickname { get; set; }
+
+        /// <summary>
+        /// Alternate nickname field (some responses use "name")
+        /// JSON field: "name"
+        /// </summary>
+        [JsonProperty("name")]
+        public string Name { get; set; }
+
+        /// <summary>
+        /// User profile image URL (can be "profile_url" or "image" in response)
+        /// JSON field: "profile_url"
+        /// </summary>
+        [JsonProperty("profile_url")]
+        public string ProfileUrl { get; set; }
+
+        /// <summary>
+        /// Alternate profile URL field (some responses use "image")
+        /// JSON field: "image"
+        /// </summary>
+        [JsonProperty("image")]
+        public string Image { get; set; }
+
+        /// <summary>
+        /// Gets the effective nickname (checks both "nickname" and "name" fields)
+        /// </summary>
+        public string GetNickname() => Nickname ?? Name;
+
+        /// <summary>
+        /// Gets the effective profile URL (checks both "profile_url" and "image" fields)
+        /// </summary>
+        public string GetProfileUrl() => ProfileUrl ?? Image;
+
         /// <summary>
         /// Check if LOGI response indicates success
         /// </summary>

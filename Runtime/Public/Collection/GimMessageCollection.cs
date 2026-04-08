@@ -56,7 +56,7 @@ namespace Gamania.GIMChat
         /// <summary>The channel this collection is bound to.</summary>
         public GimGroupChannel Channel { get; }
 
-        /// <summary>Starting timestamp for initial message loading (Unix ms). 0 = latest.</summary>
+        /// <summary>Starting timestamp for initial message loading (Unix ms). long.MaxValue = latest, 0 = oldest.</summary>
         public long StartingPoint { get; }
 
         /// <summary>Whether older messages can be loaded via LoadPrevious.</summary>
@@ -105,8 +105,8 @@ namespace Gamania.GIMChat
         /// Call StartCollection() after construction to begin loading data.
         /// </summary>
         /// <param name="channel">The channel to load messages from.</param>
-        /// <param name="startingPoint">Starting timestamp (Unix ms); 0 = latest.</param>
-        public GimMessageCollection(GimGroupChannel channel, long startingPoint = 0)
+        /// <param name="startingPoint">Starting timestamp (Unix ms); long.MaxValue (default) = latest, 0 = oldest.</param>
+        public GimMessageCollection(GimGroupChannel channel, long startingPoint = long.MaxValue)
             : this(channel, new GimMessageCollectionCreateParams
             {
                 StartingPoint = startingPoint,
@@ -130,8 +130,8 @@ namespace Gamania.GIMChat
             _messageListParams = createParams.MessageListParams ?? new GimMessageListParams();
 
             // Initialize timestamp tracking
-            _oldestSyncedTs = StartingPoint == 0 ? long.MaxValue : StartingPoint;
-            _latestSyncedTs = StartingPoint == long.MaxValue ? 0 : StartingPoint;
+            _oldestSyncedTs = long.MaxValue;
+            _latestSyncedTs = 0;
 
             // Generate unique identifier
             _identifier = $"mc_{Guid.NewGuid():N}_{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}";
@@ -502,20 +502,13 @@ namespace Gamania.GIMChat
 
             try
             {
-                long ts = StartingPoint == 0 ? long.MaxValue : StartingPoint;
+                long ts = StartingPoint;
                 var repo = GIMChatMain.Instance.GetMessageRepository();
-
-                // Create initialization params (load both prev and next)
-                var initParams = _messageListParams.Clone();
-                initParams.PreviousResultSize = _messageListParams.PreviousResultSize;
-                initParams.NextResultSize = _messageListParams.NextResultSize > 0
-                    ? _messageListParams.NextResultSize
-                    : _messageListParams.PreviousResultSize;
 
                 var result = await repo.GetMessagesAsync(
                     Channel.ChannelUrl,
                     messageTs: ts,
-                    messageListParams: initParams);
+                    messageListParams: _messageListParams);
 
                 var messages = new List<GimBaseMessage>();
                 foreach (var bo in result.Messages)
@@ -535,7 +528,7 @@ namespace Gamania.GIMChat
 
                 // Use API returned hasNext/hasPrevious
                 HasPrevious = result.HasPrevious;
-                HasNext = StartingPoint != 0 && result.HasNext;
+                HasNext = StartingPoint != long.MaxValue && result.HasNext;
 
                 Logger.Info(LogCategory.Message, $"StartCollection completed: {messages.Count} messages, HasPrevious={HasPrevious}, HasNext={HasNext}");
 

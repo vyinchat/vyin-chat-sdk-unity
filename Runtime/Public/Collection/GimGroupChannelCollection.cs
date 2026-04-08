@@ -382,7 +382,8 @@ namespace Gamania.GIMChat
             {
                 Logger.Info(LogCategory.Channel, "First LoadMore completed, auto-requesting changelogs");
                 // Fire and forget (don't await to avoid blocking LoadMore return)
-                _ = RequestChangeLogsAsync();
+                // Pass sorted channels to ensure sync time can be calculated from them
+                _ = RequestChangeLogsAsync(sorted);
             }
 
             return sorted.AsReadOnly();
@@ -409,8 +410,9 @@ namespace Gamania.GIMChat
         /// 4. Process deleted channels (trigger OnChannelsDeleted)
         /// 5. Save new syncTime to PlayerPrefs
         /// </summary>
+        /// <param name="loadedChannels">Optional channels from LoadMore for sync time calculation fallback</param>
         /// <returns>Whether sync succeeded</returns>
-        internal async Task<bool> RequestChangeLogsAsync()
+        internal async Task<bool> RequestChangeLogsAsync(IReadOnlyList<GimGroupChannel> loadedChannels = null)
         {
             GuardDisposed();
 
@@ -423,7 +425,7 @@ namespace Gamania.GIMChat
 
             try
             {
-                var syncTime = CalculateSyncTime();
+                var syncTime = CalculateSyncTime(loadedChannels);
                 var currentUser = GIMChatMain.Instance.GetCurrentUser();
                 if (currentUser == null || string.IsNullOrEmpty(currentUser.UserId))
                 {
@@ -474,25 +476,27 @@ namespace Gamania.GIMChat
         ///
         /// Priority:
         /// 1. Saved syncTime from PlayerPrefs (highest)
-        /// 2. First channel's time in Collection
+        /// 2. First channel's time (from loadedChannels, or ChannelList fallback)
         /// 3. Last connected time (requires GetLastConnectedAt implementation)
         /// 4. Current time (fallback)
         /// </summary>
-        private long CalculateSyncTime()
+        /// <param name="loadedChannels">Optional channels passed from LoadMore for reliable access</param>
+        private long CalculateSyncTime(IReadOnlyList<GimGroupChannel> loadedChannels = null)
         {
+            // Priority 1: Saved syncTime from PlayerPrefs (requires currentUser)
             var currentUser = GIMChatMain.Instance.GetCurrentUser();
-            if (currentUser == null) return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-
-            // Priority 1: Saved syncTime from PlayerPrefs
-            var savedTime = SyncTimeStorage.LoadSyncTime(currentUser.UserId);
-            if (savedTime.HasValue)
+            if (currentUser != null)
             {
-                Logger.Info(LogCategory.Channel, $"Using saved syncTime: {savedTime.Value}");
-                return savedTime.Value;
+                var savedTime = SyncTimeStorage.LoadSyncTime(currentUser.UserId);
+                if (savedTime.HasValue)
+                {
+                    Logger.Info(LogCategory.Channel, $"Using saved syncTime: {savedTime.Value}");
+                    return savedTime.Value;
+                }
             }
 
-            // Priority 2: First channel's time
-            var firstChannel = ChannelList.FirstOrDefault();
+            // Priority 2: First channel's time (loadedChannels first for reliability, then ChannelList fallback)
+            var firstChannel = loadedChannels?.FirstOrDefault() ?? ChannelList.FirstOrDefault();
             if (firstChannel != null)
             {
                 var time = firstChannel.LastMessage?.CreatedAt ?? firstChannel.CreatedAt;

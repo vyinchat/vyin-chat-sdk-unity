@@ -5,16 +5,16 @@ namespace Gamania.GIMChat.Internal.Data.Cache
 {
     /// <summary>
     /// Shared in-memory cache singleton.
-    /// Currently implements pending/failed message queues only.
-    /// TODO: expand to channel cache, message cache, user cache, state transitions, local DB sync.
+    /// Implements pending/failed message queues, channel cache, and user cache.
     /// </summary>
-    public class CacheDataSource
+    internal class CacheDataSource
     {
         public static CacheDataSource Instance { get; } = new CacheDataSource();
 
         private readonly Dictionary<string, List<GimBaseMessage>> _pending = new();
         private readonly Dictionary<string, List<GimBaseMessage>> _failed = new();
         private readonly Dictionary<string, GimGroupChannel> _channels = new();
+        private readonly Dictionary<string, GimUser> _users = new();
 
         // ── Pending messages ──────────────────────────────────────────────────────
 
@@ -143,6 +143,67 @@ namespace Gamania.GIMChat.Internal.Data.Cache
                 _channels.Remove(channelUrl);
         }
 
+        // ── User cache ───────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Returns the cached user with the given userId, or null if not found.
+        /// </summary>
+        public GimUser GetUserFromCache(string userId)
+        {
+            if (string.IsNullOrEmpty(userId)) return null;
+            return _users.TryGetValue(userId, out var user) ? user : null;
+        }
+
+        /// <summary>
+        /// Adds or updates a user in the cache.
+        /// </summary>
+        public void UpsertUser(GimUser user)
+        {
+            if (user == null || string.IsNullOrEmpty(user.UserId)) return;
+            _users[user.UserId] = user;
+        }
+
+        /// <summary>
+        /// Checks if the new user info differs from the cached version.
+        /// Compares Nickname and ProfileUrl fields.
+        /// Returns true if there are differences, false if identical or user not in cache.
+        /// </summary>
+        public bool HasUserInfoChanged(GimUser newUser)
+        {
+            if (newUser == null || string.IsNullOrEmpty(newUser.UserId)) return false;
+
+            if (!_users.TryGetValue(newUser.UserId, out var cachedUser))
+                return false; // Not in cache, no "change" to report
+
+            return cachedUser.Nickname != newUser.Nickname
+                || cachedUser.ProfileUrl != newUser.ProfileUrl;
+        }
+
+        /// <summary>
+        /// Checks if the user info has changed and updates the cache if so.
+        /// Returns true if the user info was changed and updated, false otherwise.
+        /// </summary>
+        public bool CheckAndUpdateUserIfChanged(GimUser newUser)
+        {
+            if (newUser == null || string.IsNullOrEmpty(newUser.UserId)) return false;
+
+            if (!_users.TryGetValue(newUser.UserId, out var cachedUser))
+            {
+                // Not in cache, insert it
+                _users[newUser.UserId] = newUser;
+                return false; // No "change" event, just initial cache
+            }
+
+            if (cachedUser.Nickname != newUser.Nickname || cachedUser.ProfileUrl != newUser.ProfileUrl)
+            {
+                // User info changed, update cache
+                _users[newUser.UserId] = newUser;
+                return true;
+            }
+
+            return false;
+        }
+
         // ── Reset ─────────────────────────────────────────────────────────────────
 
         /// <summary>
@@ -153,6 +214,7 @@ namespace Gamania.GIMChat.Internal.Data.Cache
             _pending.Clear();
             _failed.Clear();
             _channels.Clear();
+            _users.Clear();
         }
     }
 }

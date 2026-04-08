@@ -29,6 +29,7 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
         private ConnectionManager _connectionManager;
         private IChannelRepository _channelRepository;
         private IMessageRepository _messageRepository;
+        private IUserRepository _userRepository;
         private IMessageAutoResender _messageAutoResender;
         private CancellationTokenSource _resendCts;
         private LifecycleCallbacks _lifecycleCallbacks;
@@ -139,6 +140,7 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
             // Initialize HTTP repositories with API host
             _baseUrl = apiHost;
             _channelRepository = new ChannelRepositoryImpl(_httpClient, _baseUrl);
+            _userRepository = new UserRepositoryImpl(_httpClient, _baseUrl);
             Logger.Debug(LogCategory.Http, $"HTTP initialized with API host: {_baseUrl}");
 
             // Create WebSocket configuration
@@ -525,6 +527,11 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
             var message = ParseBroadcastMessage(payload, "MESG");
             if (message != null)
             {
+                // Check if sender info has changed compared to cache
+                // For current user: syncs profile silently; for others: triggers event if changed
+                GimSdkDelegateManager.Instance.CheckAndNotifySenderInfoChanged(
+                    message.Sender, _currentUser);
+
                 var channel = new GimGroupChannel { ChannelUrl = message.ChannelUrl };
                 GimGroupChannel.TriggerMessageReceived(channel, message);
             }
@@ -886,6 +893,7 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
             _webSocketClient = new UnityWebSocketClient();
             _channelRepository = null;
             _messageRepository = null;
+            _userRepository = null;
             _baseUrl = null;
             _sessionHandler = null;
             OnTokenProvided = null;
@@ -898,6 +906,110 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
         {
             return _currentUser;
         }
+
+        #region User Profile
+
+        /// <summary>
+        /// Updates the current user's profile information.
+        /// </summary>
+        public void UpdateCurrentUserInfo(GimUserUpdateParams updateParams, GimErrorHandler handler)
+        {
+            // Validation: Not initialized
+            if (_initParams == null)
+            {
+                handler?.Invoke(new GimException(GimErrorCode.InvalidInitialization,
+                    "GIMChat SDK is not initialized. Call GIMChat.Init() first."));
+                return;
+            }
+
+            // Validation: Null params
+            if (updateParams == null)
+            {
+                handler?.Invoke(new GimException(GimErrorCode.InvalidParameter,
+                    "updateParams cannot be null."));
+                return;
+            }
+
+            // Validation: All fields null
+            if (!updateParams.HasAnyFieldSet())
+            {
+                handler?.Invoke(new GimException(GimErrorCode.InvalidParameter,
+                    "At least one field must be set."));
+                return;
+            }
+
+            // Validation: Not connected
+            if (_currentUser == null)
+            {
+                handler?.Invoke(new GimException(GimErrorCode.ConnectionRequired,
+                    "Not connected. Call GIMChat.Connect() first."));
+                return;
+            }
+
+            // Execute update asynchronously
+            _ = UpdateCurrentUserInfoInternalAsync(updateParams, handler);
+        }
+
+        private async Task UpdateCurrentUserInfoInternalAsync(GimUserUpdateParams updateParams, GimErrorHandler handler)
+        {
+            try
+            {
+                // Call user update API
+                var result = await _userRepository.UpdateUserInfoAsync(
+                    _currentUser.UserId,
+                    updateParams.Nickname,
+                    updateParams.ProfileImageUrl);
+
+                // Update current user with result
+                if (result.Nickname != null)
+                {
+                    _currentUser.Nickname = result.Nickname;
+                }
+                if (result.ProfileUrl != null)
+                {
+                    _currentUser.ProfileUrl = result.ProfileUrl;
+                }
+
+                // Notify user event handlers
+                GimSdkDelegateManager.Instance.NotifyUserInfoUpdated(
+                    new System.Collections.Generic.List<GimUser> { _currentUser });
+
+                Logger.Info(LogCategory.Http, "User profile updated successfully");
+                handler?.Invoke(null);
+            }
+            catch (GimException ex)
+            {
+                Logger.Error(LogCategory.Http, $"Failed to update user profile: {ex.ErrorCode}", ex);
+                handler?.Invoke(ex);
+            }
+            catch (Exception ex)
+            {
+                Logger.Error(LogCategory.Http, $"Unexpected error updating user profile: {ex.Message}", ex);
+                handler?.Invoke(new GimException(GimErrorCode.UnknownError, ex.Message));
+            }
+        }
+
+        /// <summary>
+        /// Updates the current user's profile information (async version).
+        /// </summary>
+        public Task UpdateCurrentUserInfoAsync(GimUserUpdateParams updateParams)
+        {
+            var tcs = new TaskCompletionSource<bool>();
+            UpdateCurrentUserInfo(updateParams, error =>
+            {
+                if (error != null)
+                {
+                    tcs.SetException(error);
+                }
+                else
+                {
+                    tcs.SetResult(true);
+                }
+            });
+            return tcs.Task;
+        }
+
+        #endregion
 
         #region Lifecycle Management
 

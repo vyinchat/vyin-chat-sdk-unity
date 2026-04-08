@@ -3,6 +3,7 @@
 // -----------------------------------------------------------------------------
 
 using System;
+using Gamania.GIMChat.Internal;
 using Gamania.GIMChat.Internal.Platform.Unity;
 using Logger = Gamania.GIMChat.Internal.Domain.Log.Logger;
 
@@ -238,6 +239,63 @@ namespace Gamania.GIMChat
             {
                 throw new InvalidOperationException("GIMChat SDK is not initialized. Call GIMChat.Init() first.");
             }
+        }
+
+        #endregion
+
+        #region User Event Handler
+
+        /// <summary>
+        /// Registers a user event handler to receive user-related events.
+        /// </summary>
+        /// <param name="identifier">Unique identifier for the handler.</param>
+        /// <param name="handler">Handler instance with event callbacks.</param>
+        public static void AddUserEventHandler(string identifier, GimUserEventHandler handler)
+        {
+            GimSdkDelegateManager.Instance.AddUserEventHandler(identifier, handler);
+        }
+
+        /// <summary>
+        /// Removes a previously registered user event handler.
+        /// </summary>
+        /// <param name="identifier">Identifier of the handler to remove.</param>
+        /// <returns>The removed handler, or null if not found.</returns>
+        public static GimUserEventHandler RemoveUserEventHandler(string identifier)
+        {
+            return GimSdkDelegateManager.Instance.RemoveUserEventHandler(identifier);
+        }
+
+        /// <summary>
+        /// Removes all registered user event handlers.
+        /// </summary>
+        public static void RemoveAllUserEventHandlers()
+        {
+            GimSdkDelegateManager.Instance.RemoveAllUserEventHandlers();
+        }
+
+        #endregion
+
+        #region User Profile
+
+        /// <summary>
+        /// Updates the current user's profile information.
+        /// </summary>
+        /// <param name="updateParams">Update parameters.</param>
+        /// <param name="handler">Completion handler with error (null on success).</param>
+        public static void UpdateCurrentUserInfo(GimUserUpdateParams updateParams, GimErrorHandler handler)
+        {
+            _impl.UpdateCurrentUserInfo(updateParams, handler);
+        }
+
+        /// <summary>
+        /// Updates the current user's profile information (async version).
+        /// </summary>
+        /// <param name="updateParams">Update parameters.</param>
+        /// <returns>Task that completes when update succeeds.</returns>
+        /// <exception cref="GimException">Thrown on failure.</exception>
+        public static System.Threading.Tasks.Task UpdateCurrentUserInfoAsync(GimUserUpdateParams updateParams)
+        {
+            return _impl.UpdateCurrentUserInfoAsync(updateParams);
         }
 
         #endregion

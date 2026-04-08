@@ -106,7 +106,7 @@ namespace Gamania.GIMChat.Internal.Data.Network
             // Add /ws path if not already present
             string host = baseUrl.EndsWith("/ws") ? baseUrl : $"{baseUrl}/ws";
 
-            // Build query parameters (matching Swift SDK)
+            // Build query parameters
             var queryParams = new System.Collections.Generic.List<string>
             {
                 $"p=Unity",  // Platform

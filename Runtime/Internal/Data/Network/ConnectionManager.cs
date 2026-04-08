@@ -444,7 +444,13 @@ namespace Gamania.GIMChat.Internal.Data.Network
                     // Invoke login handler (first connection)
                     if (_loginHandler != null)
                     {
-                        var user = new GimUser { UserId = userId };
+                        // Build user from LOGI response
+                        var user = new GimUser
+                        {
+                            UserId = logi.UserId ?? userId,
+                            Nickname = logi.GetNickname(),
+                            ProfileUrl = logi.GetProfileUrl()
+                        };
                         _loginHandler.Invoke(user, null);
                         _loginHandler = null;
                     }
