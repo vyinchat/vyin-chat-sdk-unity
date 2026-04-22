@@ -8,6 +8,7 @@
 
 using System;
 using Newtonsoft.Json;
+using Logger = Gamania.GIMChat.Internal.Domain.Log.Logger;
 
 namespace Gamania.GIMChat.Internal.Domain.Commands
 {
@@ -82,8 +83,9 @@ namespace Gamania.GIMChat.Internal.Domain.Commands
                 LogiCommand logiCommand = JsonConvert.DeserializeObject<LogiCommand>(payload);
                 return logiCommand;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                Logger.Error("CommandParser", $"ParseLogiCommand exception: {ex.GetType().Name}: {ex.Message}");
                 return null;
             }
         }
