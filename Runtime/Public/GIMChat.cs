@@ -212,9 +212,9 @@ namespace Gamania.GIMChat
         /// Creates a new collection for fetching a paginated list of messages in a specific channel.
         /// </summary>
         /// <param name="channel">The channel to load messages for.</param>
-        /// <param name="startingPoint">The starting timestamp (Unix ms) to load messages from. Defaults to 0 (latest).</param>
+        /// <param name="startingPoint">The starting timestamp (Unix ms) to load messages from. Defaults to long.MaxValue (latest).</param>
         /// <returns>A new <see cref="GimMessageCollection"/> instance.</returns>
-        public static GimMessageCollection CreateMessageCollection(GimGroupChannel channel, long startingPoint = 0)
+        public static GimMessageCollection CreateMessageCollection(GimGroupChannel channel, long startingPoint = long.MaxValue)
         {
             EnsureInitialized();
             return new GimMessageCollection(channel, startingPoint);

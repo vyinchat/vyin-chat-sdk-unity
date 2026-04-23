@@ -530,7 +530,7 @@ namespace Gamania.GIMChat
                 HasPrevious = result.HasPrevious;
                 HasNext = StartingPoint != long.MaxValue && result.HasNext;
 
-                Logger.Info(LogCategory.Message, $"StartCollection completed: {messages.Count} messages, HasPrevious={HasPrevious}, HasNext={HasNext}");
+                Logger.Info(LogCategory.Message, $"StartCollection completed: {messages.Count} messages, HasPrevious={HasPrevious}, HasNext={HasNext}, StartingPoint={ts}");
 
                 DispatchToMainThread(() =>
                 {

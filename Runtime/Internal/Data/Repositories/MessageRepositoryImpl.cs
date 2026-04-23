@@ -138,6 +138,8 @@ namespace Gamania.GIMChat.Internal.Data.Repositories
 
             messageListParams ??= new GimMessageListParams();
 
+            Logger.Debug(LogCategory.Message, $"GetMessages: ts={messageTs}, prev={messageListParams.PreviousResultSize}, next={messageListParams.NextResultSize}");
+
             return await ExecuteAsync(async () =>
             {
                 var path = $"{_baseUrl}/group_channels/{channelUrl}/messages";
@@ -157,12 +159,16 @@ namespace Gamania.GIMChat.Internal.Data.Repositories
                     .Where(m => m != null)
                     .ToList();
 
-                return new GetMessagesResult
+                var result = new GetMessagesResult
                 {
                     Messages = messages.AsReadOnly(),
                     HasPrevious = dto?.has_prev ?? (messages.Count >= messageListParams.PreviousResultSize),
                     HasNext = dto?.has_next ?? (messages.Count >= messageListParams.NextResultSize)
                 };
+
+                Logger.Debug(LogCategory.Message, $"GetMessages result: count={messages.Count}, HasPrevious={result.HasPrevious}, HasNext={result.HasNext}");
+
+                return result;
             }, "Failed to get messages", channelUrl);
         }
 

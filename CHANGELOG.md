@@ -4,6 +4,13 @@ All notable changes to this package will be documented in this file.
 The format is based on [Keep a Changelog](http://keepachangelog.com/en/1.0.0/)
 and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2026-04-23
+
+### Fixed
+
+- **IL2CPP compatibility** — Fixed connection failure on devices built with high code stripping settings
+- **Message history** — Fixed `GIMChat.CreateMessageCollection(channel)` loading from the oldest messages instead of the latest when called without an explicit starting point
+
 ## [1.1.1] - 2026-04-22
 
 ### Fixed

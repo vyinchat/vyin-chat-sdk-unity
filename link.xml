@@ -1,0 +1,3 @@
+<linker>
+    <assembly fullname="GIMChat" preserve="all"/>
+</linker>
