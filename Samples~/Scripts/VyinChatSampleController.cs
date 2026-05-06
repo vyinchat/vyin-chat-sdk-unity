@@ -6,16 +6,10 @@ using System;
 using System.Collections.Generic;
 
 /// <summary>
-/// Vyin Chat SDK Sample - Demonstrates core SDK functionality.
-///
-/// SDK Usage Flow:
-/// 1. Initialize SDK with GIMChat.Init()
-/// 2. Connect to server with GIMChat.Connect()
-/// 3. Create or get a channel with GimGroupChannelModule
-/// 4. Send messages with GimGroupChannel.SendUserMessage()
-/// 5. Receive real-time updates via GimGroupChannelCollection / GimMessageCollection
+/// MainPage — SDK init, connect, channel management, and ChannelCollection.
+/// After channel is ready, opens ChatPage via ChatPageController.
 /// </summary>
-public class VyinChatSampleController : MonoBehaviour, IGimSessionHandler, IGimGroupChannelCollectionDelegate, IGimMessageCollectionDelegate
+public class VyinChatSampleController : MonoBehaviour, IGimSessionHandler, IGimGroupChannelCollectionDelegate
 {
     #region Inspector Fields
 
@@ -47,12 +41,6 @@ public class VyinChatSampleController : MonoBehaviour, IGimSessionHandler, IGimG
     [Tooltip("Enable automatic message resend on reconnection")]
     [SerializeField] private bool enableAutoResend = true;
 
-    [Tooltip("When enabled, shows each sending status (Pending → Succeeded/Failed) as separate entries")]
-    [SerializeField] private bool showSendingStatusTransitions;
-
-    [Tooltip("When enabled, updated messages are shown as separate entries instead of replacing the original")]
-    [SerializeField] private bool showUpdatesAsSeparateMessages;
-
     [Tooltip("New token to provide when SDK requests refresh")]
     [SerializeField] private string refreshToken = "demo-refresh-token";
 
@@ -60,13 +48,18 @@ public class VyinChatSampleController : MonoBehaviour, IGimSessionHandler, IGimG
     [SerializeField] private bool simulateRefreshFailure;
 
     [Header("UI Elements")]
-    [SerializeField] private TMP_InputField inputField;
-    [SerializeField] private Button sendButton;
-    [SerializeField] private Button loadMoreButton;
-    [SerializeField] private Button loadPreviousMessagesButton;
-    [SerializeField] private TextMeshProUGUI logText;
-    [SerializeField] private ScrollRect scrollRect;
+    [SerializeField] private Transform logContent;
+    [SerializeField] private ScrollRect logScrollRect;
     [SerializeField] private TextMeshProUGUI connectionStatusText;
+    [SerializeField] private Button loadMoreButton;
+    [SerializeField] private Button openChatButton;
+
+    [Header("Prefabs")]
+    [SerializeField] private TextMeshProUGUI logItemPrefab;
+
+    [Header("Chat Page")]
+    [SerializeField] private GameObject mainPanel;
+    [SerializeField] private ChatPageController chatPageController;
 
     #endregion
 
@@ -74,9 +67,7 @@ public class VyinChatSampleController : MonoBehaviour, IGimSessionHandler, IGimG
 
     private const string HANDLER_ID = "VyinChatSampleHandler";
     private GimGroupChannel _currentChannel;
-    private readonly Dictionary<string, (string message, string meta1, string meta2)> _messageCache = new();
     private GimGroupChannelCollection _channelCollection;
-    private GimMessageCollection _messageCollection;
 
     // Token refresh state
     private Action<string> _tokenRefreshSuccess;
@@ -96,54 +87,40 @@ public class VyinChatSampleController : MonoBehaviour, IGimSessionHandler, IGimG
 
     private void OnDestroy()
     {
-        // Cleanup handlers
         GimGroupChannel.RemoveGroupChannelHandler(HANDLER_ID);
         GIMChat.RemoveConnectionHandler(HANDLER_ID);
         _channelCollection?.Dispose();
-        _messageCollection?.Dispose();
     }
 
     #endregion
 
-    #region Sample Step 1: Initialize
+    #region Step 1: Initialize
 
-    /// <summary>
-    /// Step 1: Initialize SDK with app configuration.
-    /// </summary>
     private void InitializeAndConnect()
     {
         LogInfo($"AppId: {appId}");
 
-        // Step 1: Initialize SDK
         var initParams = new GimInitParams(appId, logLevel: GimLogLevel.Debug);
         GIMChat.Init(initParams);
         LogInfo("SDK Initialized");
 
-        // Enable auto-resend for message reliability testing
         GIMChat.SetEnableMessageAutoResend(enableAutoResend);
         LogInfo($"Auto-resend: {(enableAutoResend ? "enabled" : "disabled")}");
 
-        // Set session handler for token refresh
         GIMChat.SetSessionHandler(this);
         LogInfo("Session handler registered");
 
-        // Register connection handler
         RegisterConnectionHandler();
-
         Connect();
     }
 
     #endregion
 
-    #region Sample Step 2: Connect
+    #region Step 2: Connect
 
-    /// <summary>
-    /// Step 2: Connect to Vyin Chat with user credentials.
-    /// </summary>
     private void Connect()
     {
         var token = string.IsNullOrEmpty(authToken) ? null : authToken;
-
         LogInfo($"Connecting as '{userId}'...");
         UpdateConnectionStatusDisplay("Connecting...", ConnectingColor);
         GIMChat.Connect(userId, token, OnConnected);
@@ -158,45 +135,35 @@ public class VyinChatSampleController : MonoBehaviour, IGimSessionHandler, IGimG
         }
 
         LogInfo($"Connected! Welcome, {user.UserId}!");
-
-        // Initialize Collection
         InitChannelCollectionAndLoad();
-
-        // Proceed to Step 3
         CreateOrGetChannel();
     }
 
     #endregion
 
-    #region Sample Step 3: Create or Get Channel
+    #region Step 3: Channel
 
-    /// <summary>
-    /// Step 3: Create or get a group channel.
-    /// </summary>
     private void CreateOrGetChannel()
     {
         LogSeparator();
         LogInfo($"Creating channel '{channelName}'...");
 
-        // Build member list
         var members = new List<string> { userId };
         if (!string.IsNullOrEmpty(botId))
         {
-            LogInfo($"Creating with botId: '{botId}'...");
+            LogInfo($"Inviting bot: '{botId}'");
             members.Add(botId);
         }
         members.AddRange(inviteUserIds);
 
-        // Create channel params
         var createParams = new GimGroupChannelCreateParams
         {
             Name = channelName,
             UserIds = members,
             OperatorUserIds = new List<string> { userId },
-            IsDistinct = true  // Reuse existing channel if members match
+            IsDistinct = true
         };
 
-        // Create channel
         GimGroupChannelModule.CreateGroupChannel(createParams, OnChannelCreated);
     }
 
@@ -208,9 +175,7 @@ public class VyinChatSampleController : MonoBehaviour, IGimSessionHandler, IGimG
             return;
         }
 
-        LogInfo($"Channel created!");
-
-        // Get channel info
+        LogInfo("Channel created!");
         GimGroupChannelModule.GetGroupChannel(channel.ChannelUrl, OnChannelRetrieved);
     }
 
@@ -223,70 +188,22 @@ public class VyinChatSampleController : MonoBehaviour, IGimSessionHandler, IGimG
         }
 
         _currentChannel = channel;
-        LogInfo($"Channel ready!");
-        LogInfo($"  Name: {channel.Name}");
+        LogInfo($"Channel ready: {channel.Name}");
         LogInfo($"  URL: {channel.ChannelUrl}");
-
-        // Step 5: Start MessageCollection for real-time updates
-        InitMessageCollectionAndLoad();
-        // RegisterGroupChannelMessageHandler();
-
         LogSeparator();
-        LogInfo("Ready to chat! Type a message above.");
+        LogInfo("Tap 'Open Chat' to enter the chat room.");
+
+        if (openChatButton != null)
+            openChatButton.interactable = true;
+
+        OnSampleGroupChannelReady(channel);
     }
+
+    protected virtual void OnSampleGroupChannelReady(GimGroupChannel channel) { }
 
     #endregion
 
-    #region Sample Step 4: Send Message
-
-    /// <summary>
-    /// Step 4: Send a user message.
-    /// </summary>
-    private void SendChatMessage(string text)
-    {
-        if (_currentChannel == null)
-        {
-            LogError("No channel available");
-            return;
-        }
-
-        // Send message via SDK
-        var messageParams = new GimUserMessageCreateParams { Message = text };
-        GimUserMessage pending = null;
-        pending = _currentChannel.SendUserMessage(messageParams, (msg, err) => OnMessageSent(msg, err, pending?.ReqId, text));
-        if (pending != null)
-        {
-            ShowPendingMessage(pending.ReqId, text);
-        }
-    }
-
-    private void OnMessageSent(GimUserMessage message, GimException error, string pendingId, string originalText)
-    {
-        if (error != null)
-        {
-            LogError($"Failed to send: {error.Message}");
-            if (!string.IsNullOrEmpty(pendingId))
-            {
-                var failedId = showSendingStatusTransitions ? $"{pendingId}-failed" : pendingId;
-                UpdateMessageDisplay(failedId, $"[{userId}] {originalText}", $"  -> {GimSendingStatus.Failed}");
-            }
-            return;
-        }
-
-        if (message != null)
-        {
-            var displayName = GetDisplayName(message);
-            if (!showSendingStatusTransitions && !string.IsNullOrEmpty(pendingId))
-            {
-                _messageCache.Remove(pendingId);
-            }
-            UpdateMessageDisplay(message.MessageId.ToString(), $"[{displayName}] {message.Message}", $"  -> {message.SendingStatus}");
-        }
-    }
-
-    #endregion
-
-    #region Sample Step 5: Collection (Real-time Updates)
+    #region Step 4: ChannelCollection
 
     private async void InitChannelCollectionAndLoad()
     {
@@ -296,52 +213,17 @@ public class VyinChatSampleController : MonoBehaviour, IGimSessionHandler, IGimG
         _channelCollection = GIMChat.CreateGroupChannelCollection(pageLimit);
         _channelCollection.Delegate = this;
 
-        LogInfo("Loading channels via Collection...");
         try
         {
             var channels = await _channelCollection.LoadMoreAsync();
             LogInfo($"Collection loaded {channels.Count} channels.");
-            // NOTE: Changelog is automatically triggered after first LoadMore
-            // No need to manually call RequestChangeLogsAsync() here
         }
         catch (GimException ex)
         {
-            LogError($"Collection Load/Sync failed: {ex.Message}");
+            LogError($"Collection Load failed: {ex.Message}");
         }
     }
 
-    private void InitMessageCollectionAndLoad()
-    {
-        LogSeparator();
-        LogInfo($"Creating MessageCollection for {_currentChannel.ChannelUrl}...");
-
-        _messageCollection = GIMChat.CreateMessageCollection(_currentChannel);
-        _messageCollection.Delegate = this;
-
-        LogInfo("Loading initial messages via MessageCollection...");
-        _messageCollection.StartCollection((messages, error) =>
-        {
-            if (error != null)
-            {
-                LogError($"MessageCollection Start failed: {error.Message}");
-                return;
-            }
-
-            LogInfo($"MessageCollection loaded {messages.Count} initial messages.");
-            foreach (var msg in messages)
-            {
-                var displayName = GetDisplayName(msg);
-                UpdateMessageDisplay(msg.MessageId.ToString(), $"[{displayName}] {msg.Message}");
-            }
-            LogInfo($"  HasPrevious: {_messageCollection.HasPrevious}");
-            LogInfo($"  HasNext: {_messageCollection.HasNext}");
-        });
-    }
-
-    /// <summary>
-    /// [TEST] Manually trigger LoadMore for testing pagination.
-    /// Right-click on VyinChatSampleController component in Inspector → Test LoadMore
-    /// </summary>
     [ContextMenu("Test LoadMore Channels")]
     private async void TestLoadMoreChannels()
     {
@@ -351,12 +233,6 @@ public class VyinChatSampleController : MonoBehaviour, IGimSessionHandler, IGimG
             return;
         }
 
-        LogSeparator();
-        LogInfo($"[TestLoadMore] Calling LoadMoreAsync()...");
-        LogInfo($"  Before: {_channelCollection.ChannelList.Count} channels in collection");
-        LogInfo($"  HasNext: {_channelCollection.HasNext}");
-        LogInfo($"  IsLoading: {_channelCollection.IsLoading}");
-
         if (!_channelCollection.HasNext)
         {
             LogInfo("[TestLoadMore] No more channels to load!");
@@ -365,41 +241,20 @@ public class VyinChatSampleController : MonoBehaviour, IGimSessionHandler, IGimG
 
         if (_channelCollection.IsLoading)
         {
-            LogInfo("[TestLoadMore] Already loading, please wait...");
+            LogInfo("[TestLoadMore] Already loading...");
             return;
         }
 
+        LogSeparator();
         try
         {
             var channels = await _channelCollection.LoadMoreAsync();
-            LogInfo($"[TestLoadMore] Loaded {channels.Count} new channel(s):");
-
-            // Display detailed info for each newly loaded channel
-            for (int i = 0; i < channels.Count; i++)
+            LogInfo($"[TestLoadMore] Loaded {channels.Count} channel(s). Total: {_channelCollection.ChannelList.Count}");
+            foreach (var ch in channels)
             {
-                var ch = channels[i];
                 var lastMsg = ch.LastMessage?.Message ?? "(no messages)";
-                var createdAt = DateTimeOffset.FromUnixTimeMilliseconds(ch.CreatedAt).ToString("yyyy-MM-dd HH:mm");
-
-                LogInfo($"  [{i + 1}] {ch.Name ?? "(unnamed)"}");
-                LogInfo($"      URL: {ch.ChannelUrl}");
-                LogInfo($"      Members: {ch.MemberCount} | Created: {createdAt}");
-                LogInfo($"      Last Message: {lastMsg}");
+                LogInfo($"  {ch.Name ?? ch.ChannelUrl} | {lastMsg}");
             }
-
-            LogInfo($"[TestLoadMore] Total channels now: {_channelCollection.ChannelList.Count}");
-            LogInfo($"[TestLoadMore] HasNext: {_channelCollection.HasNext}");
-
-            if (_channelCollection.HasNext)
-            {
-                LogInfo("[TestLoadMore] Right-click again to load more!");
-            }
-            else
-            {
-                LogInfo("[TestLoadMore] All channels loaded!");
-            }
-
-            LogSeparator();
         }
         catch (GimException ex)
         {
@@ -407,163 +262,54 @@ public class VyinChatSampleController : MonoBehaviour, IGimSessionHandler, IGimG
         }
     }
 
-    [ContextMenu("Test Load Previous Messages")]
-    private async void TestLoadPreviousMessages()
-    {
-        if (_messageCollection == null)
-        {
-            LogError("[TestLoadPrevious] MessageCollection not created yet!");
-            return;
-        }
-
-        LogSeparator();
-        LogInfo($"[TestLoadPrevious] Calling LoadPreviousAsync()...");
-
-        if (!_messageCollection.HasPrevious)
-        {
-            LogInfo("[TestLoadPrevious] No more previous messages to load!");
-            return;
-        }
-
-        try
-        {
-            var messages = await _messageCollection.LoadPreviousAsync();
-            LogInfo($"[TestLoadPrevious] Loaded {messages.Count} previous message(s).");
-            
-            // NOTE: We could display them here, but the sample UI just appends to the bottom
-            // So we'll just log them to the console for verification.
-            foreach (var msg in messages)
-            {
-                 LogInfo($"  <- [{GetDisplayName(msg)}] {msg.Message}");
-            }
-            LogInfo($"  HasPrevious: {_messageCollection.HasPrevious}");
-        }
-        catch (GimException ex)
-        {
-            LogError($"[TestLoadPrevious] Failed: {ex.Message}");
-        }
-    }
-
     #endregion
 
-    #region IGimGroupChannelCollectionDelegate Implementation
+    #region IGimGroupChannelCollectionDelegate
 
     public void OnChannelsAdded(GimGroupChannelCollection collection, GimChannelContext context, IReadOnlyList<GimGroupChannel> channels)
     {
-        LogInfo($"[Channel Collection] OnChannelsAdded: {channels.Count} channel(s), Source: {context.Source}");
-        foreach (var ch in channels)
-        {
-            LogInfo($"  + {ch.Name ?? ch.ChannelUrl}");
-        }
+        LogInfo($"[ChannelCollection] Added {channels.Count} channel(s), Source: {context.Source}");
     }
 
     public void OnChannelsUpdated(GimGroupChannelCollection collection, GimChannelContext context, IReadOnlyList<GimGroupChannel> channels)
     {
-        LogInfo($"[Channel Collection] OnChannelsUpdated: {channels.Count} channel(s), Source: {context.Source}");
-        foreach (var ch in channels)
-        {
-            LogInfo($"  [updated] {ch.Name ?? ch.ChannelUrl}");
-        }
+        LogInfo($"[ChannelCollection] Updated {channels.Count} channel(s), Source: {context.Source}");
     }
 
     public void OnChannelsDeleted(GimGroupChannelCollection collection, GimChannelContext context, IReadOnlyList<string> channelUrls)
     {
-        LogInfo($"[Channel Collection] OnChannelsDeleted: {channelUrls.Count} channel(s), Source: {context.Source}");
-        foreach (var url in channelUrls)
-        {
-            LogInfo($"  - {url}");
-        }
+        LogInfo($"[ChannelCollection] Deleted {channelUrls.Count} channel(s), Source: {context.Source}");
     }
 
     #endregion
 
-    #region IGimMessageCollectionDelegate Implementation
-
-    public void OnMessagesAdded(GimMessageCollection collection, GimMessageContext context, GimGroupChannel channel, IReadOnlyList<GimBaseMessage> addedMessages)
-    {
-        LogInfo($"[Message Collection] OnMessagesAdded: {addedMessages.Count} message(s), Source: {context.Source}");
-        foreach (var message in addedMessages)
-        {
-            if (message.Sender?.UserId == userId) continue; // Skip own messages if we already showed them via sent callback
-            
-            var displayName = GetDisplayName(message);
-            var meta1 = $"  -> Received | Type: '{message.CustomType}' | Done: {message.Done}";
-            UpdateMessageDisplay(message.MessageId.ToString(), $"[{displayName}] {message.Message}", meta1);
-        }
-    }
-
-    public void OnMessagesUpdated(GimMessageCollection collection, GimMessageContext context, GimGroupChannel channel, IReadOnlyList<GimBaseMessage> updatedMessages)
-    {
-        LogInfo($"[Message Collection] OnMessagesUpdated: {updatedMessages.Count} message(s), Source: {context.Source}");
-        foreach (var message in updatedMessages)
-        {
-            if (message.Sender?.UserId == userId) continue;
-            
-            var displayName = GetDisplayName(message);
-            var meta1 = $"  -> Updated | Type: '{message.CustomType}' | Done: {message.Done}";
-            
-            var displayId = (showUpdatesAsSeparateMessages)
-                ? $"{message.MessageId}-{System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}"
-                : message.MessageId.ToString();
-
-            UpdateMessageDisplay(displayId, $"[{displayName}] {message.Message}", meta1);
-        }
-    }
-
-    public void OnMessagesDeleted(GimMessageCollection collection, GimMessageContext context, GimGroupChannel channel, IReadOnlyList<GimBaseMessage> deletedMessages)
-    {
-        LogInfo($"[Message Collection] OnMessagesDeleted: {deletedMessages.Count} message(s), Source: {context.Source}");
-        foreach (var message in deletedMessages)
-        {
-            UpdateMessageDisplay($"{message.MessageId}-deleted", $"[Deleted] Message {message.MessageId} was deleted.", null);
-        }
-    }
-
-    public void OnChannelUpdated(GimMessageCollection collection, GimMessageContext context, GimGroupChannel channel)
-    {
-        LogInfo($"[Message Collection] OnChannelUpdated: {channel.Name}, Source: {context.Source}");
-    }
-
-    public void OnChannelDeleted(GimMessageCollection collection, GimMessageContext context, string channelUrl)
-    {
-        LogInfo($"[Message Collection] OnChannelDeleted: {channelUrl}, Source: {context.Source}");
-    }
-
-    public void OnHugeGapDetected(GimMessageCollection collection)
-    {
-        LogInfo($"[Message Collection] Huge Gap Detected! Re-initializing collection...");
-        // Handle huge gap by re-starting the collection
-        InitMessageCollectionAndLoad();
-    }
-
-    #endregion
-
-    #region UI Helpers
+    #region UI
 
     private void SetupUI()
     {
-        if (sendButton != null)
-        {
-            sendButton.onClick.AddListener(OnSendButtonClicked);
-        }
-
         if (loadMoreButton != null)
-        {
             loadMoreButton.onClick.AddListener(TestLoadMoreChannels);
-        }
-        
-        if (loadPreviousMessagesButton != null)
+
+        if (openChatButton != null)
         {
-            loadPreviousMessagesButton.onClick.AddListener(TestLoadPreviousMessages);
+            openChatButton.interactable = false;
+            openChatButton.onClick.AddListener(OnOpenChatClicked);
         }
 
         UpdateConnectionStatusDisplay("Disconnected", DisconnectedColor);
     }
 
-    private static readonly Color ConnectedColor = new(0.2f, 0.8f, 0.4f); // Soft green
-    private static readonly Color DisconnectedColor = new(0.9f, 0.3f, 0.3f); // Soft red
-    private static readonly Color ConnectingColor = new(0.3f, 0.6f, 0.9f); // Soft blue
-    private static readonly Color ReconnectingColor = new(1f, 0.7f, 0.2f); // Amber
+    private void OnOpenChatClicked()
+    {
+        if (_currentChannel == null) return;
+        mainPanel?.SetActive(false);
+        chatPageController.Open(_currentChannel, userId, onClose: () => mainPanel?.SetActive(true));
+    }
+
+    private static readonly Color ConnectedColor = new(0.2f, 0.8f, 0.4f);
+    private static readonly Color DisconnectedColor = new(0.9f, 0.3f, 0.3f);
+    private static readonly Color ConnectingColor = new(0.3f, 0.6f, 0.9f);
+    private static readonly Color ReconnectingColor = new(1f, 0.7f, 0.2f);
 
     private void RegisterConnectionHandler()
     {
@@ -585,39 +331,6 @@ public class VyinChatSampleController : MonoBehaviour, IGimSessionHandler, IGimG
         connectionStatusText.color = color;
     }
 
-    private void OnSendButtonClicked()
-    {
-        if (inputField == null) return;
-
-        var text = inputField.text.Trim();
-        if (string.IsNullOrEmpty(text)) return;
-
-        inputField.text = "";
-        inputField.ActivateInputField();
-
-        if (_currentChannel == null)
-        {
-            LogInfo("No channel available. Creating one...");
-            CreateOrGetChannel();
-            return;
-        }
-
-        SendChatMessage(text);
-    }
-
-    private void ShowPendingMessage(string pendingId, string text)
-    {
-        UpdateMessageDisplay(pendingId, $"[{userId}] {text}", $"  -> {GimSendingStatus.Pending}");
-    }
-
-    private static string GetDisplayName(GimBaseMessage message)
-    {
-        if (message?.Sender == null) return "Unknown";
-        return string.IsNullOrEmpty(message.Sender.Nickname)
-            ? message.Sender.UserId
-            : message.Sender.Nickname;
-    }
-
     #endregion
 
     #region Logging
@@ -626,150 +339,91 @@ public class VyinChatSampleController : MonoBehaviour, IGimSessionHandler, IGimG
     {
         var formatted = $"[Sample] {message}";
         Debug.Log(formatted);
-        AppendToLog(formatted);
+        AppendLogItem(formatted);
     }
 
     protected void LogError(string message)
     {
         var formatted = $"[Sample] ERROR: {message}";
         Debug.LogError(formatted);
-        AppendToLog(formatted);
+        AppendLogItem(formatted);
     }
 
     protected void LogSeparator()
     {
-        AppendToLog("────────────────────────────────");
+        AppendLogItem("────────────────────────────────");
     }
 
-    private void AppendToLog(string text)
+    private void AppendLogItem(string text)
     {
-        if (logText != null)
-        {
-            logText.text += text + "\n";
-            ScrollToBottom();
-        }
+        if (logItemPrefab == null || logContent == null) return;
+        var item = Instantiate(logItemPrefab, logContent);
+        item.text = text;
+        ScrollLogToBottom();
     }
 
-    private void UpdateMessageDisplay(string messageId, string message, string meta1 = null, string meta2 = null)
+    private void ScrollLogToBottom()
     {
-        _messageCache[messageId] = (message, meta1, meta2);
-
-        if (logText == null) return;
-
-        var lines = new List<string>();
-        foreach (var entry in _messageCache.Values)
-        {
-            lines.Add(entry.message);
-            if (!string.IsNullOrEmpty(entry.meta1))
-                lines.Add(entry.meta1);
-            if (!string.IsNullOrEmpty(entry.meta2))
-                lines.Add(entry.meta2);
-        }
-
-        logText.text = string.Join("\n", lines);
-        ScrollToBottom();
-    }
-
-    private void ScrollToBottom()
-    {
-        if (scrollRect != null)
-        {
+        if (logScrollRect != null)
             StartCoroutine(ScrollToBottomCoroutine());
-        }
     }
 
     private System.Collections.IEnumerator ScrollToBottomCoroutine()
     {
         yield return null;
         Canvas.ForceUpdateCanvases();
-        scrollRect.verticalNormalizedPosition = 0f;
+        logScrollRect.verticalNormalizedPosition = 0f;
     }
 
     #endregion
 
-    #region IGimSessionHandler Implementation
+    #region IGimSessionHandler
 
-    /// <summary>
-    /// Called when SDK needs a new token.
-    /// In production, fetch from your auth server.
-    /// </summary>
     public void OnSessionTokenRequired(Action<string> success, Action fail)
     {
         _tokenRefreshSuccess = success;
         _tokenRefreshFail = fail;
         _isWaitingForToken = true;
 
-        LogInfo("🔑 SDK requests new token!");
-        LogInfo("   Use Inspector to provide token or simulate failure.");
-
-        // Auto-provide token if not simulating failure
+        LogInfo("SDK requests new token!");
         if (!simulateRefreshFailure && !string.IsNullOrEmpty(refreshToken))
         {
-            LogInfo($"   Auto-providing token: {refreshToken.Substring(0, System.Math.Min(20, refreshToken.Length))}...");
+            LogInfo($"Auto-providing token...");
             ProvideRefreshToken();
         }
     }
 
-    /// <summary>
-    /// Called when token refresh succeeded.
-    /// </summary>
     public void OnSessionRefreshed()
     {
-        LogInfo("✅ Session refreshed successfully!");
+        LogInfo("Session refreshed successfully!");
         _isWaitingForToken = false;
     }
 
-    /// <summary>
-    /// Called when session cannot be recovered.
-    /// In production, navigate to login screen.
-    /// </summary>
     public void OnSessionClosed()
     {
-        LogError("❌ Session closed - would navigate to login");
+        LogError("Session closed - would navigate to login");
         _isWaitingForToken = false;
     }
 
-    /// <summary>
-    /// Called when an error occurred during refresh.
-    /// </summary>
     public void OnSessionError(GimException error)
     {
-        LogError($"⚠️ Session error: {error.ErrorCode} - {error.Message}");
+        LogError($"Session error: {error.ErrorCode} - {error.Message}");
         _isWaitingForToken = false;
     }
 
-    /// <summary>
-    /// Provide token to SDK (call from Inspector button or code)
-    /// </summary>
     public void ProvideRefreshToken()
     {
-        if (!_isWaitingForToken)
-        {
-            LogInfo("Not waiting for token");
-            return;
-        }
-
-        LogInfo($"Providing token to SDK...");
+        if (!_isWaitingForToken) return;
         _isWaitingForToken = false;
         _tokenRefreshSuccess?.Invoke(refreshToken);
     }
 
-    /// <summary>
-    /// Fail token refresh (call from Inspector button or code)
-    /// </summary>
     public void FailTokenRefresh()
     {
-        if (!_isWaitingForToken)
-        {
-            LogInfo("Not waiting for token");
-            return;
-        }
-
-        LogInfo("Failing token refresh...");
+        if (!_isWaitingForToken) return;
         _isWaitingForToken = false;
         _tokenRefreshFail?.Invoke();
     }
 
     #endregion
-
 }

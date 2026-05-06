@@ -1,7 +1,11 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Gamania.GIMChat.Internal.Domain.Mappers;
+using Gamania.GIMChat.Internal.Domain.Models;
 using Gamania.GIMChat.Internal.Domain.UseCases;
+using Gamania.GIMChat.Internal.Domain.Message;
 using Gamania.GIMChat.Internal.Platform.Unity;
 using Logger = Gamania.GIMChat.Internal.Domain.Log.Logger;
 
@@ -10,132 +14,146 @@ namespace Gamania.GIMChat
     /// <summary>
     /// Represents a group channel for real-time messaging.
     /// </summary>
-    public class GimGroupChannel
+    public class GimGroupChannel : GimBaseChannel
     {
         private const string TAG = "GimGroupChannel";
 
-        // ══════════════════════════════════════════════════════════════════════════════
-        // Internal Message Sending Events (for SDK internal use only)
-        // ══════════════════════════════════════════════════════════════════════════════
+        /// <inheritdoc />
+        protected override GimChannelType ChannelType => GimChannelType.Group;
 
-        /// <summary>
-        /// Internal event fired when a pending message is created locally.
-        /// Used by MessageCollection to track pending messages.
-        /// </summary>
+        /// <inheritdoc />
+        protected override GimRole CurrentUserRole => MyRole;
+
         internal static event Action<GimGroupChannel, GimBaseMessage> InternalMessagePending;
-
-        /// <summary>
-        /// Internal event fired when a message is successfully sent (server ACK).
-        /// Used by MessageCollection to update message status.
-        /// </summary>
         internal static event Action<GimGroupChannel, GimBaseMessage> InternalMessageSent;
-
-        /// <summary>
-        /// Internal event fired when a message fails to send.
-        /// Used by MessageCollection to track failed messages.
-        /// </summary>
         internal static event Action<GimGroupChannel, GimBaseMessage, GimException> InternalMessageFailed;
 
         #region Properties
 
-        /// <summary>Unique URL identifier of the channel.</summary>
-        public string ChannelUrl { get; set; }
-
-        /// <summary>Display name of the channel.</summary>
-        public string Name { get; set; }
-
-        /// <summary>Unix timestamp (milliseconds) when the channel was created.</summary>
-        public long CreatedAt { get; set; }
-
         /// <summary>The most recent message in the channel.</summary>
-        public GimBaseMessage LastMessage { get; set; }
+        public GimBaseMessage LastMessage { get; internal set; }
 
-        /// <summary>List of users who are members of this channel.</summary>
-        public List<GimUser> Members { get; set; }
+        /// <summary>List of members in this channel.</summary>
+        public List<GimMember> Members { get; internal set; }
 
         /// <summary>Total number of members in the channel.</summary>
-        public int MemberCount { get; set; }
+        public int MemberCount { get; internal set; }
 
         /// <summary>Custom data associated with the channel (JSON string).</summary>
-        public string Data { get; set; }
-
-        /// <summary>URL of the channel's cover image.</summary>
-        public string CoverUrl { get; set; }
-
-        /// <summary>Custom type for categorizing the channel.</summary>
-        public string CustomType { get; set; }
+        public string Data { get; internal set; }
 
         /// <summary>Whether the channel is distinct.</summary>
-        public bool IsDistinct { get; set; }
+        public bool IsDistinct { get; internal set; }
 
         /// <summary>Whether the channel is public.</summary>
-        public bool IsPublic { get; set; }
+        public bool IsPublic { get; internal set; }
 
         /// <summary>Role of current user in this channel.</summary>
-        public GimRole MyRole { get; set; } = GimRole.None;
+        public GimRole MyRole { get; internal set; } = GimRole.None;
+
+        /// <summary>Membership state of current user in this channel.</summary>
+        public GimMemberState MyMemberState { get; internal set; } = GimMemberState.None;
+
+        /// <summary>Muted state of current user in this channel.</summary>
+        public GimMutedState MyMutedState { get; internal set; } = GimMutedState.Unmuted;
 
         #endregion
 
-        #region Send Message
+        #region Send Message Overrides
+
+        protected override IMessageAutoResender GetAutoResender()
+            => GIMChatMain.Instance?.GetMessageAutoResender();
+
+        protected override void OnMessagePending(GimUserMessage pending)
+            => TriggerMessagePending(this, pending);
+
+        protected override void OnMessageSent(GimUserMessage sent)
+            => TriggerMessageSent(this, sent);
+
+        protected override void OnMessageFailed(GimUserMessage pending, GimException error)
+            => TriggerMessageFailed(this, pending, error);
+
+        #endregion
+
+        #region Send File Message
 
         /// <summary>
-        /// Sends a user message to this group channel (callback version).
+        /// Sends a file message to this group channel (callback version, no progress).
         /// Returns immediately with a pending message object.
         /// </summary>
-        /// <param name="createParams">Parameters for creating the message.</param>
-        /// <param name="callback">Callback invoked with the sent message or error.</param>
-        /// <returns>Pending message object (status will be updated on completion).</returns>
-        public GimUserMessage SendUserMessage(GimUserMessageCreateParams createParams, GimUserMessageHandler callback)
+        public GimFileMessage SendFileMessage(GimFileMessageCreateParams createParams, GimFileMessageHandler callback)
         {
             if (callback == null)
             {
-                Logger.Warning(TAG, "SendUserMessage: callback is null");
+                Logger.Warning(TAG, "SendFileMessage: callback is null");
                 return null;
             }
 
-            var pending = CreatePendingUserMessage(createParams);
-
-            // Trigger pending event for MessageCollection
+            var pending = CreatePendingFileMessage(createParams);
             TriggerMessagePending(this, pending);
 
             _ = AsyncCallbackHelper.ExecuteAsync(
-                () => SendUserMessageCoreAsync(createParams, pending),
+                () => SendFileMessageCoreAsync(createParams, pending, null),
                 (msg, err) =>
                 {
-                    // Trigger sent/failed event based on result
                     if (err == null)
-                    {
                         TriggerMessageSent(this, msg);
-                    }
                     else
-                    {
                         TriggerMessageFailed(this, pending, err);
-                    }
                     callback(msg, err);
                 },
                 TAG,
-                "SendUserMessage"
+                "SendFileMessage"
             );
             return pending;
         }
 
         /// <summary>
-        /// Sends a user message to this group channel (async version).
-        /// If auto-resend is enabled, failed messages due to connection issues
-        /// will be automatically queued for resend on reconnection.
+        /// Sends a file message to this group channel (callback version, with progress).
+        /// Returns immediately with a pending message object.
         /// </summary>
-        /// <param name="createParams">Parameters for creating the user message.</param>
-        /// <returns>The sent user message.</returns>
-        public async Task<GimUserMessage> SendUserMessageAsync(GimUserMessageCreateParams createParams)
+        public GimFileMessage SendFileMessage(GimFileMessageCreateParams createParams, IGimFileMessageWithProgressHandler handler)
         {
-            var pending = CreatePendingUserMessage(createParams);
+            if (handler == null)
+            {
+                Logger.Warning(TAG, "SendFileMessage: handler is null");
+                return null;
+            }
 
-            // Trigger pending event for MessageCollection
+            var pending = CreatePendingFileMessage(createParams);
+            TriggerMessagePending(this, pending);
+
+            _ = AsyncCallbackHelper.ExecuteAsync(
+                () => SendFileMessageCoreAsync(createParams, pending, (reqId, bytesSent, totalBytesSent, totalBytesToSend, filePath) =>
+                {
+                    Internal.Platform.MainThreadDispatcher.Enqueue(() =>
+                        handler.OnProgress((int)bytesSent, (int)totalBytesSent, (int)totalBytesToSend));
+                }),
+                (msg, err) =>
+                {
+                    if (err == null)
+                        TriggerMessageSent(this, msg);
+                    else
+                        TriggerMessageFailed(this, pending, err);
+                    handler.OnResult(msg, err);
+                },
+                TAG,
+                "SendFileMessage"
+            );
+            return pending;
+        }
+
+        /// <summary>
+        /// Sends a file message to this group channel (async version).
+        /// </summary>
+        public async Task<GimFileMessage> SendFileMessageAsync(GimFileMessageCreateParams createParams)
+        {
+            var pending = CreatePendingFileMessage(createParams);
             TriggerMessagePending(this, pending);
 
             try
             {
-                var sent = await SendUserMessageCoreAsync(createParams, pending);
+                var sent = await SendFileMessageCoreAsync(createParams, pending, null);
                 TriggerMessageSent(this, sent);
                 return sent;
             }
@@ -146,19 +164,22 @@ namespace Gamania.GIMChat
             }
         }
 
-        private GimUserMessage CreatePendingUserMessage(GimUserMessageCreateParams createParams)
+        private GimFileMessage CreatePendingFileMessage(GimFileMessageCreateParams createParams)
         {
-            return new GimUserMessage
+            return new GimFileMessage
             {
                 ReqId = Guid.NewGuid().ToString("N"),
                 ChannelUrl = ChannelUrl,
-                Message = createParams?.Message,
+                Name = createParams?.FileName ?? "",
+                MimeType = createParams?.MimeType ?? "",
+                Size = createParams?.FileSize ?? 0,
                 CustomType = createParams?.CustomType,
                 Data = createParams?.Data,
                 CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 SendingStatus = GimSendingStatus.Pending,
                 ErrorCode = null,
-                Sender = BuildPendingSender(MyRole)
+                Sender = BuildPendingSender(MyRole),
+                FileMessageCreateParams = createParams
             };
         }
 
@@ -179,75 +200,120 @@ namespace Gamania.GIMChat
             };
         }
 
-        private async Task<GimUserMessage> SendUserMessageCoreAsync(GimUserMessageCreateParams createParams, GimUserMessage pending)
+        private async Task<GimFileMessage> SendFileMessageCoreAsync(
+            GimFileMessageCreateParams createParams,
+            GimFileMessage pending,
+            Internal.Domain.Message.FileProgressHandler progressHandler)
         {
-            var repository = GIMChatMain.Instance.GetMessageRepository();
-            var autoResender = GIMChatMain.Instance.GetMessageAutoResender();
-            var useCase = new SendMessageUseCase(repository, autoResender);
-            var sent = await useCase.ExecuteAsync(ChannelUrl, createParams, pending);
-            return GimUserMessage.FromBase(sent);
+            var repository = GIMChatMain.Instance?.GetMessageRepository()
+                ?? throw new GimException(GimErrorCode.ConnectionRequired, "Not connected");
+            var autoResender = GIMChatMain.Instance?.GetMessageAutoResender();
+            var uploadService = GIMChatMain.Instance?.GetFileUploadService();
+            var partCache = GIMChatMain.Instance?.GetFilePartCache();
+
+            var storageRepository = GIMChatMain.Instance?.GetStorageRepository();
+
+            var useCase = new SendFileMessageUseCase(repository, uploadService, autoResender, partCache, storageRepository);
+            var sent = await useCase.ExecuteAsync(ChannelUrl, createParams, pending, progressHandler);
+            return GimFileMessage.FromBase(sent);
         }
 
         #endregion
 
-        #region Resend Message
+        #region Resend File Message
 
         /// <summary>
-        /// Resends a failed user message (callback version).
-        /// Only works for messages with resendable error codes.
+        /// Resends a failed file message (callback version).
         /// </summary>
-        /// <param name="userMessage">The failed message to resend.</param>
-        /// <param name="callback">Callback invoked with the resent message or error.</param>
-        public void ResendUserMessage(GimUserMessage userMessage, GimUserMessageHandler callback)
+        public void ResendFileMessage(GimFileMessage fileMessage, GimFileMessageHandler callback)
         {
             if (callback == null)
             {
-                Logger.Warning(TAG, "ResendUserMessage: callback is null");
+                Logger.Warning(TAG, "ResendFileMessage: callback is null");
                 return;
             }
 
             _ = AsyncCallbackHelper.ExecuteAsync(
-                () => ResendUserMessageAsync(userMessage),
+                () => ResendFileMessageAsync(fileMessage),
                 (msg, err) => callback(msg, err),
                 TAG,
-                "ResendUserMessage"
+                "ResendFileMessage"
             );
         }
 
         /// <summary>
-        /// Resends a failed user message (async version).
-        /// Only works for messages with resendable error codes.
+        /// Resends a failed file message (callback version, with progress).
         /// </summary>
-        /// <param name="userMessage">The failed message to resend.</param>
-        /// <returns>The resent user message.</returns>
-        /// <exception cref="GimException">Thrown if message is not resendable.</exception>
-        public async Task<GimUserMessage> ResendUserMessageAsync(GimUserMessage userMessage)
+        public void ResendFileMessage(GimFileMessage fileMessage, IGimFileMessageWithProgressHandler handler)
         {
-            ValidateResendable(userMessage);
-
-            var createParams = new GimUserMessageCreateParams
+            if (handler == null)
             {
-                Message = userMessage.Message,
-                CustomType = userMessage.CustomType,
-                Data = userMessage.Data
-            };
+                Logger.Warning(TAG, "ResendFileMessage: handler is null");
+                return;
+            }
 
-            var sent = await SendUserMessageAsync(createParams);
-            return GimUserMessage.FromBase(sent);
+            _ = AsyncCallbackHelper.ExecuteAsync(
+                () => ResendFileMessageCoreAsync(fileMessage, (reqId, bytesSent, totalBytesSent, totalBytesToSend, filePath) =>
+                {
+                    Internal.Platform.MainThreadDispatcher.Enqueue(() =>
+                        handler.OnProgress((int)bytesSent, (int)totalBytesSent, (int)totalBytesToSend));
+                }),
+                (msg, err) => handler.OnResult(msg, err),
+                TAG,
+                "ResendFileMessage"
+            );
         }
 
-        private void ValidateResendable(GimUserMessage userMessage)
+        /// <summary>
+        /// Resends a failed file message (async version).
+        /// </summary>
+        public async Task<GimFileMessage> ResendFileMessageAsync(GimFileMessage fileMessage)
         {
-            if (userMessage == null)
-                throw new GimException(GimErrorCode.InvalidParameter, "userMessage is null");
+            return await ResendFileMessageCoreAsync(fileMessage, null);
+        }
 
-            if (string.IsNullOrEmpty(userMessage.ChannelUrl) || userMessage.ChannelUrl != ChannelUrl)
+        private async Task<GimFileMessage> ResendFileMessageCoreAsync(
+            GimFileMessage fileMessage,
+            Internal.Domain.Message.FileProgressHandler progressHandler)
+        {
+            ValidateFileResendable(fileMessage);
+
+            var createParams = fileMessage.FileMessageCreateParams ?? new GimFileMessageCreateParams
+            {
+                FilePath = null,
+                FileUrl = fileMessage.PlainUrl,
+                FileName = fileMessage.Name,
+                MimeType = fileMessage.MimeType,
+                FileSize = fileMessage.Size,
+                CustomType = fileMessage.CustomType,
+                Data = fileMessage.Data
+            };
+
+            var repository = GIMChatMain.Instance?.GetMessageRepository()
+                ?? throw new GimException(GimErrorCode.ConnectionRequired, "Not connected");
+            var autoResender = GIMChatMain.Instance?.GetMessageAutoResender();
+            var uploadService = GIMChatMain.Instance?.GetFileUploadService();
+            var partCache = GIMChatMain.Instance?.GetFilePartCache();
+
+            var useCase = new SendFileMessageUseCase(repository, uploadService, autoResender, partCache);
+            var sent = await useCase.ExecuteAsync(ChannelUrl, createParams, fileMessage, progressHandler);
+            return GimFileMessage.FromBase(sent);
+        }
+
+        private void ValidateFileResendable(GimBaseMessage message)
+        {
+            if (message == null)
+                throw new GimException(GimErrorCode.InvalidParameter, "message is null");
+
+            if (string.IsNullOrEmpty(message.ChannelUrl) || message.ChannelUrl != ChannelUrl)
                 throw new GimException(GimErrorCode.InvalidParameter, "message channel mismatch");
 
-            if (userMessage.SendingStatus != GimSendingStatus.Failed)
-                throw new GimException(GimErrorCode.InvalidParameter, "message is not in Failed state");
+            if (message.SendingStatus != GimSendingStatus.Failed &&
+                message.SendingStatus != GimSendingStatus.Canceled)
+                throw new GimException(GimErrorCode.InvalidParameter, "message is not in Failed or Canceled state");
 
-            if (!userMessage.ErrorCode.HasValue || !userMessage.ErrorCode.Value.IsResendable())
+            if (message.SendingStatus == GimSendingStatus.Failed &&
+                message.ErrorCode.HasValue && !message.ErrorCode.Value.IsResendable())
                 throw new GimException(GimErrorCode.InvalidParameter, "message is not resendable");
         }
 
@@ -255,7 +321,7 @@ namespace Gamania.GIMChat
 
         #region Channel Event Handlers
 
-        private static readonly Dictionary<string, GimGroupChannelHandler> _handlers = new();
+        private static readonly ConcurrentDictionary<string, GimGroupChannelHandler> _handlers = new();
 
         /// <summary>
         /// Adds a group channel handler to receive message events.
@@ -264,13 +330,12 @@ namespace Gamania.GIMChat
         /// <param name="handler">Handler containing callback functions.</param>
         public static void AddGroupChannelHandler(string handlerId, GimGroupChannelHandler handler)
         {
-            if (_handlers.ContainsKey(handlerId))
+            if (!_handlers.TryAdd(handlerId, handler))
             {
                 Logger.Warning(TAG, $"Handler already exists: {handlerId}");
                 return;
             }
 
-            _handlers[handlerId] = handler;
             Logger.Debug(TAG, $"Added group channel handler: {handlerId}");
         }
 
@@ -288,7 +353,7 @@ namespace Gamania.GIMChat
         /// <param name="handlerId">Unique identifier of the handler to remove.</param>
         public static void RemoveGroupChannelHandler(string handlerId)
         {
-            if (_handlers.Remove(handlerId))
+            if (_handlers.TryRemove(handlerId, out _))
             {
                 Logger.Debug(TAG, $"Removed group channel handler: {handlerId}");
             }
@@ -299,8 +364,7 @@ namespace Gamania.GIMChat
         }
 
         /// <summary>
-        /// Remove all registered group channel handlers.
-        /// Called during disconnect/logout to clean up all listeners.
+        /// Removes all registered group channel handlers.
         /// </summary>
         public static void RemoveAllGroupChannelHandlers()
         {
@@ -309,10 +373,6 @@ namespace Gamania.GIMChat
             Logger.Debug(TAG, $"Removed all group channel handlers (count: {count})");
         }
 
-        /// <summary>
-        /// Triggers message received event for all registered handlers.
-        /// Called internally when a new message is received via WebSocket.
-        /// </summary>
         internal static void TriggerMessageReceived(GimGroupChannel channel, GimBaseMessage message)
         {
             foreach (var handler in _handlers.Values)
@@ -328,10 +388,6 @@ namespace Gamania.GIMChat
             }
         }
 
-        /// <summary>
-        /// Triggers message updated event for all registered handlers.
-        /// Called internally when a message is updated via WebSocket.
-        /// </summary>
         internal static void TriggerMessageUpdated(GimGroupChannel channel, GimBaseMessage message)
         {
             foreach (var handler in _handlers.Values)
@@ -347,10 +403,6 @@ namespace Gamania.GIMChat
             }
         }
 
-        /// <summary>
-        /// Triggers channel changed event for all registered handlers.
-        /// Call when WebSocket receives channel metadata update.
-        /// </summary>
         internal static void TriggerChannelChanged(GimGroupChannel channel)
         {
             foreach (var handler in _handlers.Values)
@@ -366,10 +418,6 @@ namespace Gamania.GIMChat
             }
         }
 
-        /// <summary>
-        /// Triggers channel deleted event for all registered handlers.
-        /// Call when WebSocket receives channel delete event.
-        /// </summary>
         internal static void TriggerChannelDeleted(string channelUrl)
         {
             foreach (var handler in _handlers.Values)
@@ -385,10 +433,6 @@ namespace Gamania.GIMChat
             }
         }
 
-        /// <summary>
-        /// Triggers message pending event via internal static event.
-        /// Called internally when a pending message is created locally.
-        /// </summary>
         internal static void TriggerMessagePending(GimGroupChannel channel, GimBaseMessage message)
         {
             try
@@ -401,10 +445,6 @@ namespace Gamania.GIMChat
             }
         }
 
-        /// <summary>
-        /// Triggers message sent event via internal static event.
-        /// Called internally when a pending message is successfully sent (server ACK).
-        /// </summary>
         internal static void TriggerMessageSent(GimGroupChannel channel, GimBaseMessage message)
         {
             try
@@ -417,10 +457,6 @@ namespace Gamania.GIMChat
             }
         }
 
-        /// <summary>
-        /// Triggers message failed event via internal static event.
-        /// Called internally when a message fails to send.
-        /// </summary>
         internal static void TriggerMessageFailed(GimGroupChannel channel, GimBaseMessage message, GimException error)
         {
             try
@@ -432,6 +468,84 @@ namespace Gamania.GIMChat
                 Logger.Error(TAG, "Error in InternalMessageFailed event", e);
             }
         }
+
+        #endregion
+
+        #region Static Channel Operations
+
+        public static Task<GimGroupChannel> GetChannelAsync(string channelUrl)
+            => GetChannelCoreAsync(GimChannelType.Group, channelUrl,
+                bo => GroupChannelBoMapper.ToPublicModel((GroupChannelBO)bo));
+
+        public static void GetChannel(string channelUrl, GimGroupChannelCallbackHandler callback)
+            => GetChannelCore(GimChannelType.Group, channelUrl,
+                bo => GroupChannelBoMapper.ToPublicModel((GroupChannelBO)bo),
+                (ch, err) => callback?.Invoke(ch, err),
+                TAG, "GetChannel");
+
+        public static async Task<GimGroupChannel> CreateChannelAsync(GimGroupChannelCreateParams createParams)
+        {
+            var repository = GIMChatMain.Instance.GetChannelRepository();
+            var useCase = new CreateChannelUseCase(repository);
+            return await useCase.ExecuteAsync(createParams);
+        }
+
+        public static void CreateChannel(GimGroupChannelCreateParams createParams, GimGroupChannelCallbackHandler callback)
+        {
+            if (callback == null)
+            {
+                Logger.Warning(TAG, "CreateChannel: callback is null");
+                return;
+            }
+
+            _ = AsyncCallbackHelper.ExecuteAsync(
+                () => CreateChannelAsync(createParams),
+                (ch, err) => callback(ch, err),
+                TAG,
+                "CreateChannel"
+            );
+        }
+
+        [Obsolete("Use CreateChannelAsync or CreateChannel instead")]
+        public static void CreateGroupChannel(GimGroupChannelCreateParams channelCreateParams, Action<string, string> callback)
+        {
+            if (callback == null)
+            {
+                Logger.Warning(TAG, "CreateGroupChannel: callback is null");
+                return;
+            }
+
+            if (channelCreateParams == null)
+            {
+                callback.Invoke(null, "channelCreateParams is null");
+                return;
+            }
+
+            GimGroupChannelCallbackHandler handler = (channel, error) =>
+            {
+                if (error != null) { callback.Invoke(null, error.Message); return; }
+                string result = $"{{\"channelUrl\":\"{channel?.ChannelUrl}\",\"name\":\"{channel?.Name}\"}}";
+                callback.Invoke(result, null);
+            };
+
+            CreateChannel(channelCreateParams, handler);
+        }
+
+        [Obsolete("Use GetChannelAsync instead")]
+        public static Task<GimGroupChannel> GetGroupChannelAsync(string channelUrl)
+            => GetChannelAsync(channelUrl);
+
+        [Obsolete("Use GetChannel instead")]
+        public static void GetGroupChannel(string channelUrl, GimGroupChannelCallbackHandler callback)
+            => GetChannel(channelUrl, callback);
+
+        [Obsolete("Use CreateChannelAsync instead")]
+        public static Task<GimGroupChannel> CreateGroupChannelAsync(GimGroupChannelCreateParams createParams)
+            => CreateChannelAsync(createParams);
+
+        [Obsolete("Use CreateChannel instead")]
+        public static void CreateGroupChannel(GimGroupChannelCreateParams createParams, GimGroupChannelCallbackHandler callback)
+            => CreateChannel(createParams, callback);
 
         #endregion
     }

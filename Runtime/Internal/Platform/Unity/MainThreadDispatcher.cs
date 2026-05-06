@@ -8,7 +8,7 @@ namespace Gamania.GIMChat.Internal.Platform
 {
     /// <summary>
     /// Dispatcher to execute callbacks on Unity's main thread.
-    /// Solves the issue where callbacks from native Android/iOS are executed on background threads,
+    /// Solves the issue where callbacks from native platforms are executed on background threads,
     /// which causes crashes when updating UI.
     /// </summary>
     internal class MainThreadDispatcher : MonoBehaviour

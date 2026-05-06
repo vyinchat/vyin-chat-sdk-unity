@@ -25,6 +25,7 @@ namespace Gamania.GIMChat.Internal.Data.Repositories
         private readonly string _baseUrl;
         private readonly TimeSpan _ackTimeout = TimeSpan.FromSeconds(15);
 
+
         public MessageRepositoryImpl(ConnectionManager connectionManager, IHttpClient httpClient, string baseUrl)
         {
             _connectionManager = connectionManager ?? throw new ArgumentNullException(nameof(connectionManager));
@@ -82,6 +83,93 @@ namespace Gamania.GIMChat.Internal.Data.Repositories
             catch (Exception ex)
             {
                 throw new GimException(GimErrorCode.UnknownError, $"SendMessage error: {ex.Message}", ex);
+            }
+        }
+
+        /// <summary>
+        /// Sends FILE command via WebSocket to publish a file message.
+        /// Supports both objectId mode (after upload) and fileUrl mode (direct URL).
+        /// </summary>
+        public async Task<MessageBO> SendFileMessageAsync(
+            string channelUrl,
+            string objectId,
+            string fileUrl,
+            string fileName,
+            string mimeType,
+            long fileSize,
+            GimFileMessageCreateParams createParams,
+            CancellationToken cancellationToken = default)
+        {
+            if (!_connectionManager.IsConnected || string.IsNullOrEmpty(_connectionManager.SessionKey))
+                throw new GimException(GimErrorCode.ConnectionRequired, "Cannot send file message: Not connected.");
+
+            try
+            {
+                object payload;
+                if (!string.IsNullOrEmpty(objectId))
+                {
+                    // objectId mode — file was uploaded
+                    payload = new
+                    {
+                        channel_url = channelUrl,
+                        file = new { object_id = objectId },
+                        name = fileName ?? "",
+                        type = mimeType ?? "",
+                        size = fileSize,
+                        data = createParams?.Data ?? "",
+                        custom_type = createParams?.CustomType ?? "",
+                        thumbnail_sizes = createParams?.ThumbnailSizes?.Select(t => new
+                        {
+                            max_width = t.MaxWidth,
+                            max_height = t.MaxHeight
+                        }).ToArray(),
+                        require_auth = false
+                    };
+                }
+                else
+                {
+                    // fileUrl mode — direct URL, skip upload
+                    payload = new
+                    {
+                        channel_url = channelUrl,
+                        url = fileUrl ?? "",
+                        name = fileName ?? "",
+                        type = mimeType ?? "",
+                        size = fileSize,
+                        data = createParams?.Data ?? "",
+                        custom_type = createParams?.CustomType ?? ""
+                    };
+                }
+
+                Logger.Debug(LogCategory.Command, $"Sending FILE command for channel: {channelUrl}");
+
+                string ackPayload = await _connectionManager.SendCommandAsync(
+                    CommandType.FILE,
+                    payload,
+                    _ackTimeout,
+                    cancellationToken
+                );
+
+                if (string.IsNullOrEmpty(ackPayload))
+                {
+                    throw new GimException(GimErrorCode.AckTimeout,
+                        $"File message send timeout after {_ackTimeout.TotalSeconds}s");
+                }
+
+                Logger.Debug(LogCategory.Command, $"FILE ACK received: {ackPayload}");
+                return ParseMessageFromAck(ackPayload, channelUrl, "");
+            }
+            catch (TaskCanceledException)
+            {
+                throw new GimException(GimErrorCode.AckTimeout, "File message send timeout after 15 seconds");
+            }
+            catch (GimException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new GimException(GimErrorCode.UnknownError, $"SendFileMessage error: {ex.Message}", ex);
             }
         }
 
@@ -177,7 +265,7 @@ namespace Gamania.GIMChat.Internal.Data.Repositories
         /// </summary>
         private string BuildMessageListQuery(long messageTs, GimMessageListParams p)
         {
-            // iOS SDK logic: auto-set inclusive when both prev and next > 0
+            // Auto-set inclusive when both prev and next > 0
             var isInclusive = (p.PreviousResultSize > 0 && p.NextResultSize > 0) || p.IsInclusive;
 
             var queryParams = new List<string>
@@ -188,7 +276,7 @@ namespace Gamania.GIMChat.Internal.Data.Repositories
                 $"include={isInclusive.ToString().ToLowerInvariant()}"
             };
 
-            // Include options (following iOS SDK format)
+            // Include options
             queryParams.Add($"include_reactions={p.IncludeReactions.ToString().ToLowerInvariant()}");
             queryParams.Add($"include_thread_info={p.IncludeThreadInfo.ToString().ToLowerInvariant()}");
             queryParams.Add($"include_parent_message_info={p.IncludeParentMessageInfo.ToString().ToLowerInvariant()}");

@@ -18,9 +18,10 @@ namespace Gamania.GIMChat.Internal.Data.DTOs
         public int member_count { get; set; }
         public long created_at { get; set; }
         public string my_role { get; set; }
+        public string member_state { get; set; }
+        public bool is_muted { get; set; }
 
-        // TODO [GIM-9147-MessageCollection]: Add last_message field
-        // API response includes last_message object, implement in 13.1 MessageCollection phase:
-        // public MessageDTO last_message { get; set; }
+        public List<MemberDTO> members { get; set; }
+        public MessageDTO    last_message { get; set; }
     }
 }

@@ -6,7 +6,7 @@ namespace Gamania.GIMChat
     /// </summary>
     public static class GimSdkInfo
     {
-        public const string Version = "1.1.3";
+        public const string Version = "1.2.0";
         public const string Module = "Chat";
     }
 }

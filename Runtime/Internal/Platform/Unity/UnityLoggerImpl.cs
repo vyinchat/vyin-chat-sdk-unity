@@ -140,22 +140,20 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
                 formattedMessage += $" | {exception}";
             }
 
-            // Dispatch to main thread and log
-            MainThreadDispatcher.Enqueue(() =>
+            // UnityEngine.Debug.Log is thread-safe, so log directly
+            // without going through MainThreadDispatcher (which requires main thread)
+            switch (level)
             {
-                switch (level)
-                {
-                    case LogLevel.Warning:
-                        UnityEngine.Debug.LogWarning(formattedMessage);
-                        break;
-                    case LogLevel.Error:
-                        UnityEngine.Debug.LogError(formattedMessage);
-                        break;
-                    default: // Verbose, Debug, Info
-                        UnityEngine.Debug.Log(formattedMessage);
-                        break;
-                }
-            });
+                case LogLevel.Warning:
+                    UnityEngine.Debug.LogWarning(formattedMessage);
+                    break;
+                case LogLevel.Error:
+                    UnityEngine.Debug.LogError(formattedMessage);
+                    break;
+                default: // Verbose, Debug, Info
+                    UnityEngine.Debug.Log(formattedMessage);
+                    break;
+            }
         }
 
         private static string RedactPII(string message)

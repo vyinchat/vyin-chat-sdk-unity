@@ -441,7 +441,7 @@ namespace Gamania.GIMChat
                 // Process updated channels (triggers OnChannelsUpdated or OnChannelsAdded)
                 foreach (var channelBo in result.UpdatedChannels)
                 {
-                    var vcChannel = ChannelBoMapper.ToPublicModel(channelBo);
+                    var vcChannel = GroupChannelBoMapper.ToPublicModel(channelBo);
                     HandleChannelUpdated(vcChannel, GimCollectionEventSource.ChannelChangelog);
                 }
 

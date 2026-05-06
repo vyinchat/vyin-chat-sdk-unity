@@ -16,6 +16,7 @@
     "noEngineReferences": false,
     "internalsVisibleTo": [
         "GIMChat.Tests",
-        "GIMChat.Editor.Tests"
+        "GIMChat.Editor.Tests",
+        "Gamania.AINpc"
     ]
 }

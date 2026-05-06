@@ -36,6 +36,12 @@ namespace Gamania.GIMChat
         public string ChannelUrl { get; set; }
 
         /// <summary>
+        /// Type of channel this message belongs to.
+        /// Defaults to Group when not specified by the server.
+        /// </summary>
+        public GimChannelType ChannelType { get; set; } = GimChannelType.Group;
+
+        /// <summary>
         /// Unix timestamp (milliseconds) when the message was created
         /// </summary>
         public long CreatedAt { get; set; }

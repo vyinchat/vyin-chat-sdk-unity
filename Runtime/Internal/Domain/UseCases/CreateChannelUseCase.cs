@@ -9,7 +9,7 @@ namespace Gamania.GIMChat.Internal.Domain.UseCases
     /// <summary>
     /// Handles the creation of a new group channel, including input validation and repository interaction.
     /// </summary>
-    public class CreateChannelUseCase
+    internal class CreateChannelUseCase
     {
         private readonly IChannelRepository _channelRepository;
 
@@ -49,13 +49,13 @@ namespace Gamania.GIMChat.Internal.Domain.UseCases
             // Execute repository call
             try
             {
-                var channelBo = await _channelRepository.CreateChannelAsync(createParams, cancellationToken)
+                var channelBo = await _channelRepository.CreateGroupChannelAsync(createParams, cancellationToken)
                 ?? throw new GimException(
                         GimErrorCode.UnknownError,
                         "Failed to create channel - repository returned null");
 
                 // Convert BO to Public Model
-                return ChannelBoMapper.ToPublicModel(channelBo);
+                return GroupChannelBoMapper.ToPublicModel(channelBo);
             }
             catch (GimException)
             {

@@ -29,8 +29,9 @@ namespace Gamania.GIMChat.Internal.Domain.Message
 
         /// <summary>
         /// Message creation parameters.
+        /// Accepts GimBaseMessageCreateParams to support both UserMessage and FileMessage.
         /// </summary>
-        public GimUserMessageCreateParams CreateParams { get; }
+        public GimBaseMessageCreateParams CreateParams { get; }
 
         /// <summary>
         /// Current sending status.
@@ -74,7 +75,7 @@ namespace Gamania.GIMChat.Internal.Domain.Message
         /// <summary>
         /// Creates a new pending message.
         /// </summary>
-        public PendingMessage(string requestId, GimUserMessageCreateParams createParams, GimBaseMessage baseMessage)
+        public PendingMessage(string requestId, GimBaseMessageCreateParams createParams, GimBaseMessage baseMessage)
         {
             RequestId = requestId ?? throw new ArgumentNullException(nameof(requestId));
             BaseMessage = baseMessage ?? throw new ArgumentNullException(nameof(baseMessage));

@@ -1,25 +1,27 @@
+using System.Collections.Generic;
+using System.Linq;
 using Gamania.GIMChat.Internal.Data.DTOs;
 using Gamania.GIMChat.Internal.Domain.Models;
 
 namespace Gamania.GIMChat.Internal.Data.Mappers
 {
     /// <summary>
-    /// Mapper for converting between ChannelDTO and ChannelBO
+    /// Mapper for converting between ChannelDTO and GroupChannelBO
     /// Data Layer responsibility: DTO ↔ Business Object conversion
     /// </summary>
     public static class ChannelDtoMapper
     {
         /// <summary>
-        /// Convert ChannelDTO to ChannelBO (Business Object)
+        /// Convert ChannelDTO to GroupChannelBO (Business Object)
         /// </summary>
-        public static ChannelBO ToBusinessObject(ChannelDTO dto)
+        public static GroupChannelBO ToBusinessObject(ChannelDTO dto)
         {
             if (dto == null)
             {
                 return null;
             }
 
-            return new ChannelBO
+            return new GroupChannelBO
             {
                 ChannelUrl = dto.channel_url,
                 Name = dto.name,
@@ -29,16 +31,49 @@ namespace Gamania.GIMChat.Internal.Data.Mappers
                 IsPublic = dto.is_public,
                 MemberCount = dto.member_count,
                 CreatedAt = dto.created_at,
-                MyRole = MessageDtoMapper.ParseRole(dto.my_role)
-                // TODO [GIM-9147-MessageCollection]: Parse last_message from API response
-                // LastMessage = MessageDtoMapper.ToBusinessObject(dto.last_message)
+                MyRole = MessageDtoMapper.ParseRole(dto.my_role),
+                MyMemberState = ParseMemberState(dto.member_state),
+                MyMutedState = dto.is_muted ? MutedStateBO.Muted : MutedStateBO.Unmuted,
+                Members      = dto.members?.Select(ToMemberBO).ToList(),
+                LastMessage  = MessageDtoMapper.ToBusinessObject(dto.last_message)
             };
         }
 
         /// <summary>
-        /// Convert ChannelBO to ChannelDTO
+        /// Parse member state string to MemberStateBO enum.
         /// </summary>
-        public static ChannelDTO ToDto(ChannelBO bo)
+        public static MemberStateBO ParseMemberState(string memberState)
+        {
+            if (string.IsNullOrEmpty(memberState))
+                return MemberStateBO.None;
+
+            switch (memberState.ToLowerInvariant())
+            {
+                case "invited":
+                    return MemberStateBO.Invited;
+                case "joined":
+                    return MemberStateBO.Joined;
+                case "left":
+                    return MemberStateBO.Left;
+                default:
+                    return MemberStateBO.None;
+            }
+        }
+
+        private static MemberBO ToMemberBO(MemberDTO dto) => new MemberBO
+        {
+            UserId      = dto.user_id,
+            Nickname    = dto.nickname,
+            ProfileUrl  = dto.profile_url,
+            MemberState = ParseMemberState(dto.state),
+            Role        = MessageDtoMapper.ParseRole(dto.role),
+            IsMuted     = dto.is_muted,
+        };
+
+        /// <summary>
+        /// Convert GroupChannelBO to ChannelDTO
+        /// </summary>
+        public static ChannelDTO ToDto(GroupChannelBO bo)
         {
             if (bo == null)
             {
@@ -54,9 +89,9 @@ namespace Gamania.GIMChat.Internal.Data.Mappers
                 is_distinct = bo.IsDistinct,
                 is_public = bo.IsPublic,
                 member_count = bo.MemberCount,
-                created_at = bo.CreatedAt
-                // TODO [GIM-9147-MessageCollection]: Map LastMessage back to DTO
-                // last_message = MessageDtoMapper.ToDto(bo.LastMessage)
+                created_at = bo.CreatedAt,
+                member_state = bo.MyMemberState.ToString().ToLowerInvariant(),
+                is_muted = bo.MyMutedState == MutedStateBO.Muted
             };
         }
     }

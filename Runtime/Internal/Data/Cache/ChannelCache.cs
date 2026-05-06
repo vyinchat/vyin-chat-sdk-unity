@@ -32,7 +32,7 @@ namespace Gamania.GIMChat.Internal.Data.Cache
         /// <param name="channelUrl">Channel URL as key</param>
         /// <param name="channel">Cached channel if found and not expired</param>
         /// <returns>True if cache hit and not expired, false otherwise</returns>
-        public bool TryGet(string channelUrl, out ChannelBO channel)
+        public bool TryGet(string channelUrl, out GroupChannelBO channel)
         {
             if (string.IsNullOrWhiteSpace(channelUrl))
             {
@@ -64,7 +64,7 @@ namespace Gamania.GIMChat.Internal.Data.Cache
         /// <param name="channelUrl">Channel URL as key</param>
         /// <param name="channel">Channel data to cache</param>
         /// <param name="customTtl">Custom TTL (optional, uses default if null)</param>
-        public void Set(string channelUrl, ChannelBO channel, TimeSpan? customTtl = null)
+        public void Set(string channelUrl, GroupChannelBO channel, TimeSpan? customTtl = null)
         {
             if (string.IsNullOrWhiteSpace(channelUrl))
                 throw new ArgumentNullException(nameof(channelUrl));
@@ -169,7 +169,7 @@ namespace Gamania.GIMChat.Internal.Data.Cache
         /// </summary>
         private class CachedChannel
         {
-            public ChannelBO Channel { get; set; }
+            public GroupChannelBO Channel { get; set; }
             public DateTime CachedAt { get; set; }
             public TimeSpan Ttl { get; set; }
 

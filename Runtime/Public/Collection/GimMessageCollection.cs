@@ -858,7 +858,7 @@ namespace Gamania.GIMChat
                     long oldestTs = prevMessages.Min(m => m.CreatedAt);
                     _oldestSyncedTs = Math.Min(_oldestSyncedTs, oldestTs);
 
-                    // If server indicates more available, may need additional handling (simplified here, or use fillPrevGap like iOS)
+                    // If server indicates more available, may need additional handling
                 }
 
                 if (result.NextMessages != null && result.NextMessages.Count > 0)

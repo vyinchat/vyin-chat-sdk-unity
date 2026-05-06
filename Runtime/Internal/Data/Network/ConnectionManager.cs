@@ -501,9 +501,19 @@ namespace Gamania.GIMChat.Internal.Data.Network
 
         private void HandleFileCommand(string payload)
         {
-            Logger.Debug(LogCategory.Command, "Handling FILE command");
-            // FILE commands are not broadcast to upper layer currently
-            // If needed in future, trigger OnBroadcastCommandReceived here
+            Logger.Debug(LogCategory.Command, $"[FILE RAW] {payload}");
+
+            var reqId = ExtractReqId(payload);
+
+            if (!string.IsNullOrWhiteSpace(reqId))
+            {
+                // Always complete the ACK on the first FILE response.
+                // The server does NOT re-send FILE via WebSocket when processing completes.
+                // The upper layer (MessageRepositoryImpl) polls via HTTP to wait for ready.
+                CompletePendingAck(reqId, payload, cancelTimeout: true);
+            }
+
+            OnBroadcastCommandReceived?.Invoke(CommandType.FILE, payload);
         }
 
         private void HandleMediCommand(string payload)
@@ -705,7 +715,33 @@ namespace Gamania.GIMChat.Internal.Data.Network
         #endregion
 
         #region ACK Management
-        
+
+        /// <summary>
+        /// Re-registers an ACK listener for a given reqId without sending a command.
+        /// Used when server will re-send a response for the same reqId (e.g., FILE not ready → wait for ready).
+        /// </summary>
+        public async Task<string> WaitForAckAsync(
+            string reqId,
+            TimeSpan timeout,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrEmpty(reqId))
+                throw new ArgumentException("reqId cannot be null or empty", nameof(reqId));
+
+            var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(timeout);
+
+            RegisterPendingAck(reqId, tcs, timeoutCts);
+
+            timeoutCts.Token.Register(() =>
+            {
+                CompletePendingAck(reqId, null, cancelTimeout: false);
+            });
+
+            return await tcs.Task;
+        }
+
         private void RegisterPendingAck(string reqId, TaskCompletionSource<string> tcs, CancellationTokenSource timeoutCts)
         {
             lock (_ackLock)

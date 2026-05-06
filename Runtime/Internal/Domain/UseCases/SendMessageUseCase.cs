@@ -165,10 +165,14 @@ namespace Gamania.GIMChat.Internal.Domain.UseCases
 
             Logger.Info(LogCategory.Message, $"[SendMessage] Resending: {pendingMessage.RequestId}");
 
+            var userCreateParams = pendingMessage.CreateParams as GimUserMessageCreateParams;
+            if (userCreateParams == null)
+                throw new GimException(GimErrorCode.InvalidParameter, "SendMessageUseCase only supports GimUserMessageCreateParams");
+
             return await SendWithRetryHandlingAsync(
                 pendingMessage,
                 pendingMessage.ChannelUrl,
-                pendingMessage.CreateParams,
+                userCreateParams,
                 cancellationToken);
         }
     }

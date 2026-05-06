@@ -15,6 +15,7 @@ using Gamania.GIMChat.Internal.Domain.Message;
 using Gamania.GIMChat.Internal.Domain.Models;
 using Gamania.GIMChat.Internal.Domain.Repositories;
 using Gamania.GIMChat.Internal.Domain.UseCases;
+using Gamania.GIMChat.Internal.Data.FileUpload;
 using Gamania.GIMChat.Internal.Data.Message;
 using Gamania.GIMChat.Internal.Platform.Unity.Network;
 using Logger = Gamania.GIMChat.Internal.Domain.Log.Logger;
@@ -23,6 +24,7 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
 {
     internal class GIMChatMain
     {
+        private const string TAG = "GIMChatMain";
         private static GIMChatMain _instance;
         private IHttpClient _httpClient;
         private IWebSocketClient _webSocketClient;
@@ -31,6 +33,9 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
         private IMessageRepository _messageRepository;
         private IUserRepository _userRepository;
         private IMessageAutoResender _messageAutoResender;
+        private IStorageRepository _storageRepository;
+        private IFileUploadService _fileUploadService;
+        private FilePartCache _filePartCache;
         private CancellationTokenSource _resendCts;
         private LifecycleCallbacks _lifecycleCallbacks;
         private string _baseUrl;
@@ -139,7 +144,6 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
 
             // Initialize HTTP repositories with API host
             _baseUrl = apiHost;
-            _channelRepository = new ChannelRepositoryImpl(_httpClient, _baseUrl);
             _userRepository = new UserRepositoryImpl(_httpClient, _baseUrl);
             Logger.Debug(LogCategory.Http, $"HTTP initialized with API host: {_baseUrl}");
 
@@ -167,6 +171,14 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
 
             // Initialize Message Repository
             _messageRepository = new MessageRepositoryImpl(_connectionManager, _httpClient, _baseUrl);
+
+            // Initialize unified Channel Repository (requires ConnectionManager for WebSocket operations)
+            _channelRepository = new ChannelRepositoryImpl(_httpClient, _connectionManager, _baseUrl);
+
+            // Initialize Storage Repository and File Upload Service
+            _storageRepository = new StorageRepositoryImpl(_httpClient, _baseUrl);
+            _filePartCache = new FilePartCache();
+            _fileUploadService = new FileUploadService(_storageRepository);
 
             // Setup lifecycle monitoring for reconnection
             SetupLifecycleMonitoring();
@@ -319,6 +331,8 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
             return _channelRepository;
         }
 
+
+
         /// <summary>
         /// Get Message Repository instance
         /// </summary>
@@ -326,6 +340,15 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
         {
             EnsureInitialized();
             return _messageRepository;
+        }
+
+        /// <summary>
+        /// Get User Repository instance
+        /// </summary>
+        public IUserRepository GetUserRepository()
+        {
+            EnsureInitialized();
+            return _userRepository;
         }
 
         /// <summary>
@@ -429,6 +452,21 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
             return _messageAutoResender;
         }
 
+        internal IFileUploadService GetFileUploadService()
+        {
+            return _fileUploadService;
+        }
+
+        internal FilePartCache GetFilePartCache()
+        {
+            return _filePartCache;
+        }
+
+        internal IStorageRepository GetStorageRepository()
+        {
+            return _storageRepository;
+        }
+
         #region Connection Handler Management
 
         public void AddConnectionHandler(string id, GimConnectionHandler handler)
@@ -488,7 +526,15 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
             => NotifyConnectionHandlers(h => h.OnReconnectStarted?.Invoke());
 
         private void HandleConnectionReconnectSucceeded()
-            => NotifyConnectionHandlers(h => h.OnReconnectSucceeded?.Invoke());
+        {
+            NotifyConnectionHandlers(h => h.OnReconnectSucceeded?.Invoke());
+
+            // Auto-reenter open channels
+            _ = GimOpenChannel.TryToEnterEnteredOpenChannelsAsync();
+
+            // Trigger resend of pending messages after token refresh
+            StartPendingMessageResend();
+        }
 
         private void HandleConnectionReconnectFailed()
             => NotifyConnectionHandlers(h => h.OnReconnectFailed?.Invoke());
@@ -505,6 +551,9 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
             switch (type)
             {
                 case CommandType.MESG:
+                    HandleMessageReceived(payload);
+                    break;
+                case CommandType.FILE:
                     HandleMessageReceived(payload);
                     break;
                 case CommandType.MEDI:
@@ -525,15 +574,20 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
         private void HandleMessageReceived(string payload)
         {
             var message = ParseBroadcastMessage(payload, "MESG");
-            if (message != null)
-            {
-                // Check if sender info has changed compared to cache
-                // For current user: syncs profile silently; for others: triggers event if changed
-                GimSdkDelegateManager.Instance.CheckAndNotifySenderInfoChanged(
-                    message.Sender, _currentUser);
+            if (message == null) return;
 
-                var channel = new GimGroupChannel { ChannelUrl = message.ChannelUrl };
-                GimGroupChannel.TriggerMessageReceived(channel, message);
+            GimSdkDelegateManager.Instance.CheckAndNotifySenderInfoChanged(
+                message.Sender, _currentUser);
+
+            if (message.ChannelType == GimChannelType.Open)
+            {
+                var openChannel = new GimOpenChannel { ChannelUrl = message.ChannelUrl };
+                GimOpenChannel.TriggerMessageReceived(openChannel, message);
+            }
+            else
+            {
+                var groupChannel = new GimGroupChannel { ChannelUrl = message.ChannelUrl };
+                GimGroupChannel.TriggerMessageReceived(groupChannel, message);
             }
         }
 
@@ -544,10 +598,17 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
         private void HandleMessageUpdated(string payload)
         {
             var message = ParseBroadcastMessage(payload, "MEDI");
-            if (message != null)
+            if (message == null) return;
+
+            if (message.ChannelType == GimChannelType.Open)
             {
-                var channel = new GimGroupChannel { ChannelUrl = message.ChannelUrl };
-                GimGroupChannel.TriggerMessageUpdated(channel, message);
+                var openChannel = new GimOpenChannel { ChannelUrl = message.ChannelUrl };
+                GimOpenChannel.TriggerMessageUpdated(openChannel, message);
+            }
+            else
+            {
+                var groupChannel = new GimGroupChannel { ChannelUrl = message.ChannelUrl };
+                GimGroupChannel.TriggerMessageUpdated(groupChannel, message);
             }
         }
 
@@ -795,6 +856,14 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
         }
 
         /// <summary>
+        /// Set user repository for testing
+        /// </summary>
+        internal void SetUserRepositoryForTesting(IUserRepository repo)
+        {
+            _userRepository = repo;
+        }
+
+        /// <summary>
         /// Set current user for testing (required for LoadMore to get userId)
         /// </summary>
         internal void SetCurrentUserForTesting(GimUser user)
@@ -813,18 +882,18 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
         /// <summary>
         /// Trigger channel message received event for testing
         /// </summary>
-        internal void TriggerChannelMessageReceivedForTesting(string channelUrl, ChannelBO channelBo)
+        internal void TriggerChannelMessageReceivedForTesting(string channelUrl, GroupChannelBO channelBo)
         {
-            var channel = ChannelBoMapper.ToPublicModel(channelBo);
+            var channel = GroupChannelBoMapper.ToPublicModel(channelBo);
             GimGroupChannel.TriggerMessageReceived(channel, null);
         }
 
         /// <summary>
         /// Trigger channel changed event for testing
         /// </summary>
-        internal void TriggerChannelChangedForTesting(string channelUrl, ChannelBO channelBo)
+        internal void TriggerChannelChangedForTesting(string channelUrl, GroupChannelBO channelBo)
         {
-            var channel = ChannelBoMapper.ToPublicModel(channelBo);
+            var channel = GroupChannelBoMapper.ToPublicModel(channelBo);
             GimGroupChannel.TriggerChannelChanged(channel);
         }
 
@@ -854,6 +923,10 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
             // Unsubscribe from all connection manager events before disposing
             UnsubscribeFromConnectionEvents();
             UnsubscribeFromTokenRefreshEvents();
+
+            // Clear open channel state on disconnect
+            GimOpenChannel.ClearEnteredChannels();
+            GimOpenChannel.ClearAllHandlers();
 
             // Disconnect WebSocket if connected
             if (_connectionManager != null)
@@ -947,46 +1020,32 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
             }
 
             // Execute update asynchronously
-            _ = UpdateCurrentUserInfoInternalAsync(updateParams, handler);
-        }
-
-        private async Task UpdateCurrentUserInfoInternalAsync(GimUserUpdateParams updateParams, GimErrorHandler handler)
-        {
-            try
-            {
-                // Call user update API
-                var result = await _userRepository.UpdateUserInfoAsync(
-                    _currentUser.UserId,
-                    updateParams.Nickname,
-                    updateParams.ProfileImageUrl);
-
-                // Update current user with result
-                if (result.Nickname != null)
+            _ = AsyncCallbackHelper.ExecuteVoidAsync(
+                async () =>
                 {
-                    _currentUser.Nickname = result.Nickname;
-                }
-                if (result.ProfileUrl != null)
-                {
-                    _currentUser.ProfileUrl = result.ProfileUrl;
-                }
+                    var result = await _userRepository.UpdateUserInfoAsync(
+                        _currentUser.UserId,
+                        updateParams.Nickname,
+                        updateParams.ProfileImageUrl);
 
-                // Notify user event handlers
-                GimSdkDelegateManager.Instance.NotifyUserInfoUpdated(
-                    new System.Collections.Generic.List<GimUser> { _currentUser });
+                    if (result.Nickname != null)
+                    {
+                        _currentUser.Nickname = result.Nickname;
+                    }
+                    if (result.ProfileUrl != null)
+                    {
+                        _currentUser.ProfileUrl = result.ProfileUrl;
+                    }
 
-                Logger.Info(LogCategory.Http, "User profile updated successfully");
-                handler?.Invoke(null);
-            }
-            catch (GimException ex)
-            {
-                Logger.Error(LogCategory.Http, $"Failed to update user profile: {ex.ErrorCode}", ex);
-                handler?.Invoke(ex);
-            }
-            catch (Exception ex)
-            {
-                Logger.Error(LogCategory.Http, $"Unexpected error updating user profile: {ex.Message}", ex);
-                handler?.Invoke(new GimException(GimErrorCode.UnknownError, ex.Message));
-            }
+                    GimSdkDelegateManager.Instance.NotifyUserInfoUpdated(
+                        new System.Collections.Generic.List<GimUser> { _currentUser });
+
+                    Logger.Info(LogCategory.Http, "User profile updated successfully");
+                },
+                handler,
+                TAG,
+                "UpdateCurrentUserInfo"
+            );
         }
 
         /// <summary>
@@ -1007,6 +1066,110 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
                 }
             });
             return tcs.Task;
+        }
+
+        #endregion
+
+        #region Block/Unblock User
+
+        public void BlockUser(string targetUserId, GimUserHandler handler)
+        {
+            if (_initParams == null)
+            {
+                handler?.Invoke(null, new GimException(GimErrorCode.InvalidInitialization,
+                    "GIMChat SDK is not initialized. Call GIMChat.Init() first."));
+                return;
+            }
+            if (string.IsNullOrEmpty(targetUserId))
+            {
+                handler?.Invoke(null, new GimException(GimErrorCode.InvalidParameter,
+                    "targetUserId cannot be null or empty."));
+                return;
+            }
+            if (_currentUser == null)
+            {
+                handler?.Invoke(null, new GimException(GimErrorCode.ConnectionRequired,
+                    "Not connected. Call GIMChat.Connect() first."));
+                return;
+            }
+            _ = AsyncCallbackHelper.ExecuteAsync(
+                async () =>
+                {
+                    var result = await _userRepository.BlockUserAsync(_currentUser.UserId, targetUserId);
+                    Logger.Info(LogCategory.Http, $"User blocked: {targetUserId}");
+                    return new GimUser
+                    {
+                        UserId = result.UserId,
+                        Nickname = result.Nickname,
+                        ProfileUrl = result.ProfileUrl
+                    };
+                },
+                (user, error) => handler?.Invoke(user, error),
+                TAG,
+                "BlockUser"
+            );
+        }
+
+        public async Task<GimUser> BlockUserAsync(string targetUserId)
+        {
+            if (_initParams == null)
+                throw new GimException(GimErrorCode.InvalidInitialization, "GIMChat SDK is not initialized.");
+            if (string.IsNullOrEmpty(targetUserId))
+                throw new GimException(GimErrorCode.InvalidParameter, "targetUserId cannot be null or empty.");
+            if (_currentUser == null)
+                throw new GimException(GimErrorCode.ConnectionRequired, "Not connected.");
+
+            var result = await _userRepository.BlockUserAsync(_currentUser.UserId, targetUserId);
+            return new GimUser
+            {
+                UserId = result.UserId,
+                Nickname = result.Nickname,
+                ProfileUrl = result.ProfileUrl
+            };
+        }
+
+        public void UnblockUser(string targetUserId, GimErrorHandler handler)
+        {
+            if (_initParams == null)
+            {
+                handler?.Invoke(new GimException(GimErrorCode.InvalidInitialization,
+                    "GIMChat SDK is not initialized. Call GIMChat.Init() first."));
+                return;
+            }
+            if (string.IsNullOrEmpty(targetUserId))
+            {
+                handler?.Invoke(new GimException(GimErrorCode.InvalidParameter,
+                    "targetUserId cannot be null or empty."));
+                return;
+            }
+            if (_currentUser == null)
+            {
+                handler?.Invoke(new GimException(GimErrorCode.ConnectionRequired,
+                    "Not connected. Call GIMChat.Connect() first."));
+                return;
+            }
+            _ = AsyncCallbackHelper.ExecuteVoidAsync(
+                async () =>
+                {
+                    await _userRepository.UnblockUserAsync(_currentUser.UserId, targetUserId);
+                    Logger.Info(LogCategory.Http, $"User unblocked: {targetUserId}");
+                },
+                handler,
+                TAG,
+                "UnblockUser"
+            );
+        }
+
+        public async Task UnblockUserAsync(string targetUserId)
+        {
+            if (_initParams == null)
+                throw new GimException(GimErrorCode.InvalidInitialization, "GIMChat SDK is not initialized.");
+            if (string.IsNullOrEmpty(targetUserId))
+                throw new GimException(GimErrorCode.InvalidParameter, "targetUserId cannot be null or empty.");
+            if (_currentUser == null)
+                throw new GimException(GimErrorCode.ConnectionRequired, "Not connected.");
+
+            await _userRepository.UnblockUserAsync(_currentUser.UserId, targetUserId);
         }
 
         #endregion

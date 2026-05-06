@@ -53,6 +53,40 @@ namespace Gamania.GIMChat.Internal.Data.Network
             CancellationToken cancellationToken = default);
 
         /// <summary>
+        /// Performs a PUT request with raw binary body.
+        /// Used for uploading file bytes to presigned URLs.
+        /// </summary>
+        /// <param name="url">Full URL to request</param>
+        /// <param name="data">Raw binary data to upload</param>
+        /// <param name="contentType">Content-Type header value (e.g. "image/png")</param>
+        /// <param name="headers">Optional HTTP headers</param>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <returns>HTTP response</returns>
+        Task<HttpResponse> PutBytesAsync(
+            string url,
+            byte[] data,
+            string contentType = null,
+            Dictionary<string, string> headers = null,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Performs a PUT request with a local file.
+        /// Used for uploading large files to presigned URLs via streaming.
+        /// </summary>
+        /// <param name="url">Full URL to request</param>
+        /// <param name="filePath">Local path to the file to upload</param>
+        /// <param name="contentType">Content-Type header value</param>
+        /// <param name="headers">Optional HTTP headers</param>
+        /// <param name="cancellationToken">Cancellation token</param>
+        /// <returns>HTTP response</returns>
+        Task<HttpResponse> PutFileAsync(
+            string url,
+            string filePath,
+            string contentType = null,
+            Dictionary<string, string> headers = null,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
         /// Performs a DELETE request
         /// </summary>
         Task<HttpResponse> DeleteAsync(

@@ -13,11 +13,31 @@ namespace Gamania.GIMChat.Internal.Domain.Repositories
     internal interface IMessageRepository
     {
         /// <summary>
-        /// Sends a message to the specified channel.
+        /// Sends a user message to the specified channel via MESG command.
         /// </summary>
         Task<MessageBO> SendMessageAsync(
             string channelUrl,
             GimUserMessageCreateParams createParams,
+            CancellationToken cancellationToken = default);
+
+        /// <summary>
+        /// Sends a file message to the specified channel via FILE command.
+        /// </summary>
+        /// <param name="channelUrl">Channel URL.</param>
+        /// <param name="objectId">Server-assigned object ID from upload (null if using fileUrl).</param>
+        /// <param name="fileUrl">Direct file URL (null if using objectId).</param>
+        /// <param name="fileName">File name.</param>
+        /// <param name="mimeType">MIME type.</param>
+        /// <param name="fileSize">File size in bytes.</param>
+        /// <param name="createParams">Original create params for data/customType.</param>
+        Task<MessageBO> SendFileMessageAsync(
+            string channelUrl,
+            string objectId,
+            string fileUrl,
+            string fileName,
+            string mimeType,
+            long fileSize,
+            GimFileMessageCreateParams createParams,
             CancellationToken cancellationToken = default);
 
         /// <summary>

@@ -48,5 +48,39 @@ namespace Gamania.GIMChat.Internal.Platform.Unity
                 InvokeCallback(default, fallback);
             }
         }
+
+        /// <summary>
+        /// Executes an async void operation and invokes callback with error (null on success).
+        /// </summary>
+        public static async Task ExecuteVoidAsync(
+            Func<Task> asyncOperation,
+            GimErrorHandler callback,
+            string tag,
+            string operationName)
+        {
+            void InvokeCallback(GimException error)
+            {
+                if (error != null)
+                {
+                    Logger.Error(tag, $"{operationName} failed", error);
+                }
+                MainThreadDispatcher.Enqueue(() => callback?.Invoke(error));
+            }
+
+            try
+            {
+                await asyncOperation();
+                InvokeCallback(null);
+            }
+            catch (GimException vcEx)
+            {
+                InvokeCallback(vcEx);
+            }
+            catch (Exception ex)
+            {
+                var fallback = new GimException(GimErrorCode.UnknownError, $"Unexpected error: {ex.Message}", ex);
+                InvokeCallback(fallback);
+            }
+        }
     }
 }

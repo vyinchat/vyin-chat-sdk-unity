@@ -31,6 +31,8 @@ namespace Gamania.GIMChat
         public static GimLogLevel GetLogLevel() => _impl.LogLevel;
         public static string GetAppVersion() => _impl.AppVersion;
 
+        internal static string GetSessionKey() => _impl.GetConnectionManager().SessionKey;
+
         /// <summary>
         /// Get current WebSocket connection state.
         /// </summary>
@@ -193,15 +195,20 @@ namespace Gamania.GIMChat
         #region Group Channel Collection
 
         /// <summary>
-        /// Creates a new query for fetching a paginated list of group channels.
+        /// Creates a new group channel collection with filter parameters.
         /// </summary>
-        /// <example>
-        /// var collection = GIMChat.CreateGroupChannelCollection(limit: 20);
-        /// collection.LoadMore((channels, error) => { ... });
-        /// </example>
-        /// <param name="limit">Max number of channels to load per page (default 20).</param>
+        /// <param name="queryParams">Query parameters including limit, CustomTypesFilter, IncludeEmpty, etc.</param>
         /// <returns>A new <see cref="GimGroupChannelCollection"/> instance.</returns>
-        public static GimGroupChannelCollection CreateGroupChannelCollection(int limit = 20)
+        public static GimGroupChannelCollection CreateGroupChannelCollection(GimGroupChannelListQueryParams queryParams = null)
+        {
+            EnsureInitialized();
+            var query = GimGroupChannelListQuery.Create(queryParams ?? new GimGroupChannelListQueryParams());
+            return new GimGroupChannelCollection(query);
+        }
+
+        /// <param name="limit">Max number of channels to load per page (default 20).</param>
+        [Obsolete("Use CreateGroupChannelCollection(GimGroupChannelListQueryParams) instead.")]
+        public static GimGroupChannelCollection CreateGroupChannelCollection(int limit)
         {
             EnsureInitialized();
             var query = GimGroupChannelListQuery.Create(limit);
@@ -232,6 +239,21 @@ namespace Gamania.GIMChat
             EnsureInitialized();
             return new GimMessageCollection(channel, createParams);
         }
+
+        #region Open Channel
+
+        /// <summary>
+        /// Creates a query for fetching a paginated list of open channels.
+        /// </summary>
+        /// <param name="params">Query parameters (optional).</param>
+        /// <returns>A new <see cref="GimOpenChannelListQuery"/> instance.</returns>
+        public static GimOpenChannelListQuery CreateOpenChannelListQuery(GimOpenChannelListQueryParams @params = null)
+        {
+            EnsureInitialized();
+            return GimOpenChannel.CreateOpenChannelListQuery(@params);
+        }
+
+        #endregion
 
         private static void EnsureInitialized()
         {
@@ -296,6 +318,103 @@ namespace Gamania.GIMChat
         public static System.Threading.Tasks.Task UpdateCurrentUserInfoAsync(GimUserUpdateParams updateParams)
         {
             return _impl.UpdateCurrentUserInfoAsync(updateParams);
+        }
+
+        #endregion
+
+        #region Block/Unblock User
+
+        /// <summary>
+        /// Blocks a user.
+        /// </summary>
+        /// <param name="targetUserId">The user ID to block.</param>
+        /// <param name="handler">Callback with blocked user info and error (null on success).</param>
+        public static void BlockUser(string targetUserId, GimUserHandler handler)
+        {
+            _impl.BlockUser(targetUserId, handler);
+        }
+
+        /// <summary>
+        /// Blocks a user (async version).
+        /// </summary>
+        /// <param name="targetUserId">The user ID to block.</param>
+        /// <returns>The blocked user info.</returns>
+        public static System.Threading.Tasks.Task<GimUser> BlockUserAsync(string targetUserId)
+        {
+            return _impl.BlockUserAsync(targetUserId);
+        }
+
+        /// <summary>
+        /// Unblocks a user.
+        /// </summary>
+        /// <param name="targetUserId">The user ID to unblock.</param>
+        /// <param name="handler">Completion handler with error (null on success).</param>
+        public static void UnblockUser(string targetUserId, GimErrorHandler handler)
+        {
+            _impl.UnblockUser(targetUserId, handler);
+        }
+
+        /// <summary>
+        /// Unblocks a user (async version).
+        /// </summary>
+        /// <param name="targetUserId">The user ID to unblock.</param>
+        public static System.Threading.Tasks.Task UnblockUserAsync(string targetUserId)
+        {
+            return _impl.UnblockUserAsync(targetUserId);
+        }
+
+        #endregion
+
+        #region User List Queries
+
+        /// <summary>
+        /// Creates a query for fetching application users with pagination.
+        /// </summary>
+        /// <param name="parameters">Query parameters (optional).</param>
+        /// <returns>A new <see cref="GimApplicationUserListQuery"/> instance.</returns>
+        public static GimApplicationUserListQuery CreateApplicationUserListQuery(
+            GimApplicationUserListQueryParams parameters = null)
+        {
+            EnsureInitialized();
+            return new GimApplicationUserListQuery(parameters);
+        }
+
+        /// <summary>
+        /// Creates a query for fetching banned users in a channel with pagination.
+        /// </summary>
+        /// <param name="parameters">Query parameters (required, must include ChannelUrl).</param>
+        /// <returns>A new <see cref="GimBannedUserListQuery"/> instance.</returns>
+        /// <exception cref="GimException">Thrown when parameters are invalid.</exception>
+        public static GimBannedUserListQuery CreateBannedUserListQuery(
+            GimBannedUserListQueryParams parameters)
+        {
+            EnsureInitialized();
+            return new GimBannedUserListQuery(parameters);
+        }
+
+        /// <summary>
+        /// Creates a query for fetching muted users in a channel with pagination.
+        /// </summary>
+        /// <param name="parameters">Query parameters (required, must include ChannelUrl).</param>
+        /// <returns>A new <see cref="GimMutedUserListQuery"/> instance.</returns>
+        /// <exception cref="GimException">Thrown when parameters are invalid.</exception>
+        public static GimMutedUserListQuery CreateMutedUserListQuery(
+            GimMutedUserListQueryParams parameters)
+        {
+            EnsureInitialized();
+            return new GimMutedUserListQuery(parameters);
+        }
+
+        /// <summary>
+        /// Creates a query for fetching users blocked by the current user with pagination.
+        /// </summary>
+        /// <param name="parameters">Query parameters (optional).</param>
+        /// <returns>A new <see cref="GimBlockedUserListQuery"/> instance.</returns>
+        public static GimBlockedUserListQuery CreateBlockedUserListQuery(
+            GimBlockedUserListQueryParams parameters = null)
+        {
+            EnsureInitialized();
+            return new GimBlockedUserListQuery(parameters);
         }
 
         #endregion

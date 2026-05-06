@@ -9,12 +9,19 @@ namespace Gamania.GIMChat.Internal.Data.Cache
     /// </summary>
     internal class CacheDataSource
     {
+        /// <summary>
+        /// Maximum number of users to cache.
+        /// </summary>
+        private const int MaxUserCacheCount = 2000;
+
         public static CacheDataSource Instance { get; } = new CacheDataSource();
 
         private readonly Dictionary<string, List<GimBaseMessage>> _pending = new();
         private readonly Dictionary<string, List<GimBaseMessage>> _failed = new();
         private readonly Dictionary<string, GimGroupChannel> _channels = new();
         private readonly Dictionary<string, GimUser> _users = new();
+        private readonly LinkedList<string> _userAccessOrder = new(); // For LRU eviction
+        private readonly object _cacheLock = new object();
 
         // ── Pending messages ──────────────────────────────────────────────────────
 
@@ -100,11 +107,16 @@ namespace Gamania.GIMChat.Internal.Data.Cache
         /// <summary>
         /// Adds or updates a channel in the shared cache.
         /// Called when LoadMore returns channels or when real-time events update a channel.
+        /// Also syncs channel members to user cache.
         /// </summary>
         public void SetChannel(GimGroupChannel channel)
         {
             if (channel == null || string.IsNullOrEmpty(channel.ChannelUrl)) return;
-            _channels[channel.ChannelUrl] = channel;
+            lock (_cacheLock)
+            {
+                _channels[channel.ChannelUrl] = channel;
+                UpsertMembersInternal(channel);
+            }
         }
 
         /// <summary>
@@ -113,8 +125,28 @@ namespace Gamania.GIMChat.Internal.Data.Cache
         public void SetChannels(IEnumerable<GimGroupChannel> channels)
         {
             if (channels == null) return;
-            foreach (var ch in channels)
-                SetChannel(ch);
+            lock (_cacheLock)
+            {
+                foreach (var ch in channels)
+                {
+                    if (ch == null || string.IsNullOrEmpty(ch.ChannelUrl)) continue;
+                    _channels[ch.ChannelUrl] = ch;
+                    UpsertMembersInternal(ch);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Syncs channel members to user cache.
+        /// Must be called while holding <see cref="_cacheLock"/>.
+        /// </summary>
+        private void UpsertMembersInternal(GimGroupChannel channel)
+        {
+            if (channel?.Members == null || channel.Members.Count == 0) return;
+            foreach (var member in channel.Members)
+            {
+                UpsertUserInternal(member);
+            }
         }
 
         /// <summary>
@@ -124,14 +156,17 @@ namespace Gamania.GIMChat.Internal.Data.Cache
         public IReadOnlyList<GimGroupChannel> GetGroupChannelsFromCache(IEnumerable<string> uris)
         {
             if (uris == null) return new List<GimGroupChannel>().AsReadOnly();
-            var result = new List<GimGroupChannel>();
-            foreach (var url in uris)
+            lock (_cacheLock)
             {
-                if (string.IsNullOrEmpty(url)) continue;
-                if (_channels.TryGetValue(url, out var ch))
-                    result.Add(ch);
+                var result = new List<GimGroupChannel>();
+                foreach (var url in uris)
+                {
+                    if (string.IsNullOrEmpty(url)) continue;
+                    if (_channels.TryGetValue(url, out var ch))
+                        result.Add(ch);
+                }
+                return result.AsReadOnly();
             }
-            return result.AsReadOnly();
         }
 
         /// <summary>
@@ -139,8 +174,11 @@ namespace Gamania.GIMChat.Internal.Data.Cache
         /// </summary>
         public void RemoveChannel(string channelUrl)
         {
-            if (!string.IsNullOrEmpty(channelUrl))
+            if (string.IsNullOrEmpty(channelUrl)) return;
+            lock (_cacheLock)
+            {
                 _channels.Remove(channelUrl);
+            }
         }
 
         // ── User cache ───────────────────────────────────────────────────────────
@@ -151,16 +189,49 @@ namespace Gamania.GIMChat.Internal.Data.Cache
         public GimUser GetUserFromCache(string userId)
         {
             if (string.IsNullOrEmpty(userId)) return null;
-            return _users.TryGetValue(userId, out var user) ? user : null;
+            lock (_cacheLock)
+            {
+                return _users.TryGetValue(userId, out var user) ? user : null;
+            }
         }
 
         /// <summary>
-        /// Adds or updates a user in the cache.
+        /// Adds or updates a user in the cache with LRU eviction.
+        /// When cache exceeds MaxUserCacheCount, oldest entries are removed.
         /// </summary>
         public void UpsertUser(GimUser user)
         {
             if (user == null || string.IsNullOrEmpty(user.UserId)) return;
+            lock (_cacheLock)
+            {
+                UpsertUserInternal(user);
+            }
+        }
+
+        /// <summary>
+        /// Internal upsert without lock acquisition.
+        /// Must be called while holding <see cref="_cacheLock"/>.
+        /// </summary>
+        private void UpsertUserInternal(GimUser user)
+        {
+            if (user == null || string.IsNullOrEmpty(user.UserId)) return;
+
+            if (_users.ContainsKey(user.UserId))
+            {
+                _userAccessOrder.Remove(user.UserId);
+            }
+            else
+            {
+                while (_users.Count >= MaxUserCacheCount && _userAccessOrder.Count > 0)
+                {
+                    var oldest = _userAccessOrder.First.Value;
+                    _userAccessOrder.RemoveFirst();
+                    _users.Remove(oldest);
+                }
+            }
+
             _users[user.UserId] = user;
+            _userAccessOrder.AddLast(user.UserId);
         }
 
         /// <summary>
@@ -171,12 +242,14 @@ namespace Gamania.GIMChat.Internal.Data.Cache
         public bool HasUserInfoChanged(GimUser newUser)
         {
             if (newUser == null || string.IsNullOrEmpty(newUser.UserId)) return false;
+            lock (_cacheLock)
+            {
+                if (!_users.TryGetValue(newUser.UserId, out var cachedUser))
+                    return false;
 
-            if (!_users.TryGetValue(newUser.UserId, out var cachedUser))
-                return false; // Not in cache, no "change" to report
-
-            return cachedUser.Nickname != newUser.Nickname
-                || cachedUser.ProfileUrl != newUser.ProfileUrl;
+                return cachedUser.Nickname != newUser.Nickname
+                    || cachedUser.ProfileUrl != newUser.ProfileUrl;
+            }
         }
 
         /// <summary>
@@ -186,22 +259,22 @@ namespace Gamania.GIMChat.Internal.Data.Cache
         public bool CheckAndUpdateUserIfChanged(GimUser newUser)
         {
             if (newUser == null || string.IsNullOrEmpty(newUser.UserId)) return false;
-
-            if (!_users.TryGetValue(newUser.UserId, out var cachedUser))
+            lock (_cacheLock)
             {
-                // Not in cache, insert it
-                _users[newUser.UserId] = newUser;
-                return false; // No "change" event, just initial cache
-            }
+                if (!_users.TryGetValue(newUser.UserId, out var cachedUser))
+                {
+                    _users[newUser.UserId] = newUser;
+                    return false;
+                }
 
-            if (cachedUser.Nickname != newUser.Nickname || cachedUser.ProfileUrl != newUser.ProfileUrl)
-            {
-                // User info changed, update cache
-                _users[newUser.UserId] = newUser;
-                return true;
-            }
+                if (cachedUser.Nickname != newUser.Nickname || cachedUser.ProfileUrl != newUser.ProfileUrl)
+                {
+                    _users[newUser.UserId] = newUser;
+                    return true;
+                }
 
-            return false;
+                return false;
+            }
         }
 
         // ── Reset ─────────────────────────────────────────────────────────────────
@@ -211,10 +284,14 @@ namespace Gamania.GIMChat.Internal.Data.Cache
         /// </summary>
         public void Clear()
         {
-            _pending.Clear();
-            _failed.Clear();
-            _channels.Clear();
-            _users.Clear();
+            lock (_cacheLock)
+            {
+                _pending.Clear();
+                _failed.Clear();
+                _channels.Clear();
+                _users.Clear();
+                _userAccessOrder.Clear();
+            }
         }
     }
 }

@@ -15,6 +15,7 @@ namespace Gamania.GIMChat
                 MessageId = message.MessageId,
                 Message = message.Message,
                 ChannelUrl = message.ChannelUrl,
+                ChannelType = message.ChannelType,
                 CreatedAt = message.CreatedAt,
                 Done = message.Done,
                 CustomType = message.CustomType,

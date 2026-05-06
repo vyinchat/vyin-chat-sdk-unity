@@ -74,6 +74,50 @@ namespace Gamania.GIMChat.Internal.Platform.Unity.Network
             return await SendRequestAsync(request, headers, cancellationToken);
         }
 
+        public async Task<HttpResponse> PutBytesAsync(
+            string url,
+            byte[] data,
+            string contentType = null,
+            Dictionary<string, string> headers = null,
+            CancellationToken cancellationToken = default)
+        {
+            using var request = new UnityWebRequest(url, "PUT");
+            if (data != null && data.Length > 0)
+            {
+                request.uploadHandler = new UploadHandlerRaw(data);
+                if (!string.IsNullOrEmpty(contentType))
+                {
+                    request.SetRequestHeader("Content-Type", contentType);
+                }
+            }
+
+            request.downloadHandler = new DownloadHandlerBuffer();
+
+            return await SendRequestAsync(request, headers, cancellationToken);
+        }
+
+        public async Task<HttpResponse> PutFileAsync(
+            string url,
+            string filePath,
+            string contentType = null,
+            Dictionary<string, string> headers = null,
+            CancellationToken cancellationToken = default)
+        {
+            using var request = new UnityWebRequest(url, "PUT");
+            if (!string.IsNullOrEmpty(filePath))
+            {
+                request.uploadHandler = new UploadHandlerFile(filePath);
+                if (!string.IsNullOrEmpty(contentType))
+                {
+                    request.SetRequestHeader("Content-Type", contentType);
+                }
+            }
+
+            request.downloadHandler = new DownloadHandlerBuffer();
+
+            return await SendRequestAsync(request, headers, cancellationToken);
+        }
+
         public async Task<HttpResponse> DeleteAsync(
             string url,
             Dictionary<string, string> headers = null,

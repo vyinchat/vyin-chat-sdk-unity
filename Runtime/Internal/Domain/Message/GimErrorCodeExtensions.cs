@@ -19,6 +19,8 @@ namespace Gamania.GIMChat
                 GimErrorCode.WebSocketConnectionFailed => true,
                 GimErrorCode.NetworkError => true,
                 GimErrorCode.RequestFailed => true,
+                GimErrorCode.FileUploadTimeout => true,
+                GimErrorCode.ErrFileIsNotReady => true,
                 _ => false
             };
         }
